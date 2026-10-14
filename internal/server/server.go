@@ -193,6 +193,10 @@ func (r idleReader) Read(p []byte) (int, error) {
 	_ = r.controller.SetReadDeadline(time.Now().Add(60 * time.Second))
 	return r.body.Read(p)
 }
+func (r idleReader) Close() error {
+	_ = r.controller.SetReadDeadline(time.Now())
+	return r.body.Close()
+}
 func (a *App) uploadHTTP(w http.ResponseWriter, r *http.Request) {
 	ticket, e := files.Verify(a.Jobs.Config.TicketKey, r.URL.Query().Get("ticket"), "upload")
 	if e != nil {
@@ -223,10 +227,10 @@ func (a *App) uploadHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), a.Jobs.Config.TransferTimeout)
 	defer cancel()
-	stop := context.AfterFunc(ctx, func() { r.Body.Close() })
+	controller := http.NewResponseController(w)
+	stop := context.AfterFunc(ctx, func() { _ = controller.SetReadDeadline(time.Now()); r.Body.Close() })
 	defer stop()
 	defer r.Body.Close()
-	controller := http.NewResponseController(w)
 	defer controller.SetReadDeadline(time.Time{})
 	t, e := a.Jobs.Receive(ctx, id, idleReader{r.Body, controller}, r.ContentLength)
 	if e != nil {

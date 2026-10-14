@@ -306,12 +306,12 @@ func TestConcurrentPUTAndCancellation(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	pw.CloseWithError(context.Canceled)
 	select {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("upload leaked")
 	}
+	pw.CloseWithError(context.Canceled)
 	v, _ := s.Store.Get(r.ID)
 	if v.State != "cancelled" {
 		t.Fatal(v)
