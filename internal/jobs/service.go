@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -498,6 +499,17 @@ func (s *Service) Recover(ctx context.Context) error {
 			if complete {
 				e = files.Validate(ctx, path, domain.Format(filepath.Ext(t.Filename)), s.Config.MaxFile)
 				complete = e == nil
+				if complete && t.SHA256 != "" {
+					f, err := os.Open(path)
+					if err != nil {
+						complete = false
+					} else {
+						h := sha256.New()
+						_, err = io.CopyBuffer(h, f, make([]byte, 64<<10))
+						f.Close()
+						complete = err == nil && strings.EqualFold(hex.EncodeToString(h.Sum(nil)), t.SHA256)
+					}
+				}
 			}
 			if complete {
 				if e = s.Files.Reserve(t.ID, st.Size()); e != nil {
