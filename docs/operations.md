@@ -23,14 +23,13 @@
 | CWA_BASE_URL | 服务端访问 CWA 的地址，优先内网 |
 | CWA_USERNAME / CWA_PASSWORD_FILE | 专用 CWA 账号及密码文件 |
 | CWA_EXPECTED_FORMAT | 与现有 CWA 转换规则一致的预期格式 |
-| CWA_WAIT_RETAINED_FORMATS | 是否等待 CWA 应保留的原格式 |
-| CWA_MAX_UPLOAD_BYTES | 该通路实际允许的上传大小 |
+| CWA_MAX_UPLOAD_BYTES | CWA 通路实际允许的整个 multipart 请求大小，须扣除协议开销计算文件上限 |
 | ZLIB_DOMAIN | 固定或验证后的书源入口 |
 | ZLIB_SESSION_FILE | 书源会话，或按已选适配实现使用账号秘密文件 |
-| MAX_FILE_BYTES / MAX_STAGING_BYTES | 文件与暂存配额 |
+| MAX_FILE_BYTES / MAX_STAGING_BYTES | 文件与暂存配额；前者同时按设备文件入口的实际请求上限收紧 |
 | GOMEMLIMIT | Go 运行时软限制，不是 RSS 硬限制 |
 
-所有文件权限按最小可访问范围设置，秘密文件只读挂载。日志不打印配置秘密、完整 Cookie、签名 URL 或上传正文。
+MCP_TOKEN_FILE、TICKET_KEY_FILE 和密码文件只读挂载。ZLIB_SESSION_FILE 位于本服务私有状态目录，适配器需要保存刷新后的登录状态时允许安全写回，不能一律只读挂载导致刷新失败。日志不打印配置秘密、完整 Cookie、签名 URL 或上传正文。
 
 不把生产配置复制到仓库。后续提供 .env.example 和 Compose 示例时只包含占位符。
 
@@ -70,10 +69,12 @@ MCPHub 的对外认证和本服务的上游认证是两层独立配置。设备�
 
 官方文档当前列出 Free/Pro 的单请求上传上限为 100 MB；实际区域设置还可能更低，部署时重新核对。
 
-- 设备 → 本服务：应用分块可以把每次请求控制在限制内。
-- 本服务 → CWA：CWA 接收的是完整 multipart 文件，请求上限依旧存在。
-- 大文件需要这第二段走已可用的内网地址或满足已有通路限制。
-- 不修改 CWA 来增加分块 API，也不把 HTTP chunked encoding 当作多请求。
+- 设备 → 本服务：首版是完整单次 PUT；MAX_FILE_BYTES 必须小于等于该段实际请求上限。
+- 本服务 → CWA：完整 multipart 文件，CWA_MAX_UPLOAD_BYTES 还要为头部、CSRF 字段与边界留出空间。
+- 允许的文件大小取应用配置与两段通路上限中的较小值；通路上限由操作者填写，不宣称能自动探测未知代理限制。MB 与 MiB 应转换为字节再比较。
+- 例如某段已确认上限为 100 MB 时，可以把 MAX_FILE_BYTES 收紧到 90 MiB，为协议开销留余量；不按 512 MiB 应用默认值直接放行。
+- 大文件需要每一段都能承受完整请求。CWA 内网地址只解决第二段，不能解决设备入口的限制。
+- 首版不通过应用分块规避此限制；若以后确有大文件需求，再单独评估续传。HTTP chunked encoding 也不等于多个请求。
 
 引用：[Cloudflare 413 文档](https://developers.cloudflare.com/support/troubleshooting/http-status-codes/4xx-client-error/error-413/)、[MCPHub 配置](https://docs.mcphub.app/configuration/mcp-settings)。
 
@@ -81,7 +82,7 @@ MCPHub 的对外认证和本服务的上游认证是两层独立配置。设备�
 
 - 发布时固定镜像标签/摘要和依赖版本；升级前备份本服务状态。
 - bbolt 使用事务内一致性备份，或停止服务后复制；不得不加说明地复制正写入的文件。
-- 任务数据库与未完成暂存文件需要对应；只备份数据库时标明某些上传可能需要设备重新发送。
+- 任务数据库与完整暂存文件需要对应；只备份数据库时标明某些输入需要重新获取。设备上传的未完成 .part 文件不恢复偏移，重启后从头发送。
 - schema 升级先备份、明确版本迁移；失败时保留旧库，不自动清空。
 - 进程恢复先核对可能已经提交到 CWA 的任务，不直接重跑所有任务。
 - CWA 本身的备份由其现有运维负责，本服务不替代书库备份。
@@ -93,6 +94,8 @@ MCPHub 的对外认证和本服务的上游认证是两层独立配置。设备�
 | AUTH_EXPIRED / CAPTCHA_REQUIRED | 在服务端恢复账号状态，然后显式重试任务 |
 | CWA 上传返回 200 但长期不可下载 | 检查权限、格式规则和 CWA 日志；保持未确认，不反复上传 |
 | 多个候选匹配 | 用户选择 CWA 候选，服务验证后 resolve |
+| 没有可确认候选 | 重新 search_books 获取 CWA 候选；用户确认后 resolve，不能直接改成 ready |
+| 不再需要的等待/阻塞任务 | acquire_book 的 cancel 释放本服务资源；已发生的 CWA 上传不会撤销 |
 | 413 | 区分设备上传段和 CWA 上传段，核对通路限制 |
 | OOM 或 RSS 超标 | 保存脱敏性能摘要，分析分配/并发/响应限制，不直接扩大门槛 |
 | 暂存空间耗尽 | 停止接收新任务，执行本服务到期清理，保留 CWA 书籍 |
