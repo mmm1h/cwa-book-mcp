@@ -52,7 +52,7 @@ func PDF(w io.Writer, size int64) error {
 	}
 	fmt.Fprintf(&small, "trailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n%d\n", start)
 	prefix := small.String()
-	padding := size - int64(len(prefix)) - 9
+	padding := size - int64(len(prefix)) - 8
 	if padding < 0 {
 		return fmt.Errorf("PDF size too small")
 	}

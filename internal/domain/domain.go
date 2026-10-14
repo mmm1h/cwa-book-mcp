@@ -3,6 +3,7 @@ package domain
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -115,6 +116,9 @@ func CleanBook(b Book) (Book, error) {
 	}
 	if b.Formats == nil {
 		b.Formats = []string{}
+	}
+	if encoded, _ := json.Marshal(b); len(encoded) > 2048 {
+		return b, E("METADATA_TOO_LARGE", "单条候选元数据超过 2 KiB")
 	}
 	return b, nil
 }

@@ -8,6 +8,8 @@
 - 元数据请求的 `c.httpClient.Do(req)` 改为 `c.doHTTP(req)`，实际请求受调用 context 取消。
 - `client.go`：增加操作 context；遇到 challenge 直接返回错误，不运行挑战求解。
 - go.mod 只保留核心实际导入的 goquery，运行时不链接 CLI/TUI。
+- `cwa_bounds.go` / `eapi.go`：搜索数组在解码时限制 50 条，避免小 HTTP
+  响应分配巨大的候选数组。发布服务只启用已验证的 EAPI 通路。
 
 响应压缩前/解压后上限、10 秒元数据截止时间、60 秒读写停滞、固定 origin
 及重定向限制由本项目 `internal/httpx` 注入。任务层统一有限重试，不使用

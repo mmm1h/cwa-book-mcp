@@ -149,7 +149,7 @@ func (c *Client) searchEAPI(query string, page, count int, opts *SearchOptions) 
 	var result struct {
 		Success    int            `json:"success"`
 		Error      string         `json:"error"`
-		Books      []eapiBook     `json:"books"`
+		Books      boundedBooks  `json:"books"`
 		Pagination eapiPagination `json:"pagination"`
 	}
 	if err := decodeEAPIJSON(body, &result); err != nil {
