@@ -187,6 +187,9 @@ func (a *App) authorize(next http.Handler) http.Handler {
 		_ = controller.SetWriteDeadline(deadline)
 		defer controller.SetWriteDeadline(time.Time{})
 		defer controller.SetReadDeadline(time.Time{})
+		// Close before clearing the deadline: an incomplete control body may
+		// otherwise leave net/http draining a stalled connection indefinitely.
+		defer r.Body.Close()
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
