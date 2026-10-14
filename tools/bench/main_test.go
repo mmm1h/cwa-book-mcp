@@ -46,3 +46,36 @@ func TestBackpressureClassification(t *testing.T) {
 		})
 	}
 }
+
+func TestContainerGateUsesHardLimitAndOOM(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		limit, current uint64
+		oom, killed    uint64
+		dockerOOM      bool
+		pass           bool
+	}{
+		{"within limit", 128 << 20, 100 << 20, 0, 0, false, true},
+		{"temporary charge overshoot", 128 << 20, 128<<20 + 65536, 0, 0, false, true},
+		{"raised limit", 256 << 20, 100 << 20, 0, 0, false, false},
+		{"missing limit", 0, 100 << 20, 0, 0, false, false},
+		{"OOM allocation failure", 128 << 20, 100 << 20, 1, 0, false, false},
+		{"OOM kill", 128 << 20, 100 << 20, 0, 1, false, false},
+		{"Docker OOM", 128 << 20, 100 << 20, 0, 0, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := bench{container: "synthetic", report: report{
+				OOMKilled: tc.dockerOOM, Gates: map[string]bool{},
+				Samples: []sample{{Cgroup: map[string]uint64{
+					"memory.max": tc.limit, "memory.current": tc.current,
+					"memory.events.oom": tc.oom, "memory.events.oom_kill": tc.killed,
+					"memory.events.max": 100,
+				}}},
+			}}
+			b.evaluate()
+			if got := b.report.Gates["cgroup_128_mib"]; got != tc.pass {
+				t.Fatalf("cgroup gate = %v, want %v", got, tc.pass)
+			}
+		})
+	}
+}

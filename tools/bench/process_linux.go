@@ -60,6 +60,13 @@ func cgroupStats(pid int) map[string]uint64 {
 				}
 			}
 		}
+		b, e = os.ReadFile(filepath.Join(dir, "memory.events"))
+		if e == nil {
+			fields := strings.Fields(string(b))
+			for i := 0; i+1 < len(fields); i += 2 {
+				out["memory.events."+fields[i]], _ = strconv.ParseUint(fields[i+1], 10, 64)
+			}
+		}
 	}
 	return out
 }

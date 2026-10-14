@@ -643,7 +643,11 @@ func (b *bench) evaluate() {
 		}
 		if limit := s.Cgroup["memory.max"]; limit > 0 {
 			containerSeen = true
-			if limit != 128<<20 || s.Cgroup["memory.current"] > limit {
+			// memory.max may be exceeded temporarily while the kernel reclaims
+			// charges. Check the configured hard limit and OOM, retaining the
+			// unmodified current/peak measurements in the report.
+			// https://docs.kernel.org/admin-guide/cgroup-v2.html#memory
+			if limit != 128<<20 || s.Cgroup["memory.events.oom"] > 0 || s.Cgroup["memory.events.oom_kill"] > 0 {
 				containerOK = false
 			}
 		}
