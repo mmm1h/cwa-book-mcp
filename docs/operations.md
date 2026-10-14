@@ -1,104 +1,134 @@
-# 运维设计
+# 运行与维护
 
-当前是操作文档设计，程序和配置文件尚未实现。下面的键名与示例供开发者落地；发布前必须用实际程序验证并同步，不能当作已经可执行的安装指南。
+程序、五个 MCP 工具、整文件 HTTP 接口和持久任务已实现。验收结果见
+[验证记录](validation.md)，阶段状态只在 [计划入口](../plan/README.md) 维护。
+开发不会自动修改现有 NAS/CWA/MCPHub；以下配置由操作者执行。
 
-## 部署形态
+## 构建与检查
 
-一个常驻 Go 服务，优先与 CWA 处于可访问其内网地址的环境。MCPHub 通过 Streamable HTTP 连接本服务；设备使用现有外网入口访问本服务签发的文件链接。
+固定 Go 1.27.2。Windows 本次工具链在被忽略的 `.tools/go/bin/go.exe`；其他机器将相同 Go 版本放入 PATH。
 
-只挂载本服务自己的持久状态和暂存目录。无需 CWA 源码、Calibre 库目录、Docker socket 或主机 SSH 权限。
+```sh
+go vet ./...
+go test ./... -timeout 90s
+go test -race ./internal/store ./internal/files ./internal/jobs ./internal/catalog ./internal/server -timeout 120s
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o dist/cwa-book-mcp-linux-amd64 ./cmd/cwa-book-mcp
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags='-s -w' -o dist/cwa-book-mcp-linux-arm64 ./cmd/cwa-book-mcp
+```
 
-运行镜像包含程序和 CA 证书，以非 root 用户运行。初始容器限制和资源验收以 [内存预算](../plan/02-stack-and-memory.md) 为准；CWA 和 MCPHub 的内存不计入本服务 RSS，但部署容量仍由操作者安排。
+镜像只运行一个 Go 进程，无额外数据库或转换器。更新依赖后执行
+`go run ./tools/notices` 重建[第三方许可证](../third_party/licenses/README.md)，复核书源最小补丁。
 
-## 计划配置
+## 首次配置
 
-| 配置键 | 用途 |
+复制 `.env.example` 为被忽略的 `.env`，填写 CWA 内网地址、专用账号、PUBLIC_BASE_URL、格式和两段通路上限；先保持 `CWA_WRITE_ENABLED=false`。
+PUBLIC_BASE_URL 是设备文件入口；含路径前缀时反向代理需剥离前缀再转发。
+
+MCP token 与票据密钥各使用独立、至少 32 字节的随机字符串。Linux 示例：
+
+```sh
+mkdir -p secrets
+openssl rand -hex 32 > secrets/mcp-token
+openssl rand -hex 32 > secrets/ticket-key
+# 操作者将 CWA 专用密码写入 secrets/cwa-password，不放入 shell 参数或 Git。
+chmod 600 secrets/mcp-token secrets/ticket-key secrets/cwa-password
+```
+
+Compose 的非 root UID/GID 为 10001。Linux 上三个只读秘密文件必须对该 UID 可读，例如由操作者将文件所有者设为 10001:10001。具名 state/staging 卷按该 UID 初始化；自选 bind mount 也需检查权限。
+
+```sh
+docker compose build
+docker compose up -d
+docker compose ps
+```
+
+Compose 仅新增本项目服务：128 MiB、禁用 swap、只读根文件系统、无额外能力，挂载本服务 state/staging 和三个秘密文件。无需 CWA 书库、Docker socket 或 SSH 密钥。
+示例只向 localhost 发布端口；操作者将 MCPHub 和现有反向代理接入可达网络，确认 CWA Docker 服务名可解析。原生二进制也可运行，配置文件路径后启动。`--version` 查看版本，`--healthcheck` 只访问当前 LISTEN_ADDR 的 /healthz。
+
+## 实际配置键
+
+| 键 | 默认 / 约束 |
 | --- | --- |
-| LISTEN_ADDR | 本服务监听地址 |
-| PUBLIC_BASE_URL | 设备可达的文件接口前缀 |
-| MCP_TOKEN_FILE | MCPHub 调用本服务的 Bearer 凭据文件 |
-| TICKET_KEY_FILE | 文件票据签名密钥文件 |
-| STATE_DIR | bbolt 和本服务私有状态 |
-| STAGING_DIR | 有配额的临时书籍目录 |
-| CWA_BASE_URL | 服务端访问 CWA 的地址，优先内网 |
-| CWA_USERNAME / CWA_PASSWORD_FILE | 专用 CWA 账号及密码文件 |
-| CWA_EXPECTED_FORMAT | 与现有 CWA 转换规则一致的预期格式 |
-| CWA_MAX_UPLOAD_BYTES | CWA 通路实际允许的整个 multipart 请求大小，须扣除协议开销计算文件上限 |
-| ZLIB_DOMAIN | 固定或验证后的书源入口 |
-| ZLIB_SESSION_FILE | 书源会话，或按已选适配实现使用账号秘密文件 |
-| MAX_FILE_BYTES / MAX_STAGING_BYTES | 文件与暂存配额；前者同时按设备文件入口的实际请求上限收紧 |
-| GOMEMLIMIT | Go 运行时软限制，不是 RSS 硬限制 |
+| LISTEN_ADDR | :8080；MCP 和文件共用监听 |
+| PUBLIC_BASE_URL | http://localhost:8080；设备可达文件入口 |
+| STATE_DIR / STAGING_DIR | state / staging；本服务私有目录 |
+| MCP_TOKEN_FILE / TICKET_KEY_FILE | 必填；各 32..4096 字节 |
+| CWA_BASE_URL | 必填；优先内网 |
+| CWA_USERNAME / CWA_PASSWORD_FILE | 必填；专用账号及密码文件 |
+| CWA_WRITE_ENABLED | false；操作者确认 CWA 规则后启用 |
+| CWA_EXPECTED_FORMAT | epub；创建任务时固定 |
+| CWA_INPUT_FORMATS / CWA_OUTPUT_FORMATS | epub,pdf；按实际转换、保留和忽略规则收紧 |
+| CWA_CONFIRM_WINDOW | 15m；大于 0、不超过 1h，从上传结束开始 |
+| MAX_FILE_BYTES | 536870912；还受 CWA 通路上限减 65536 字节约束 |
+| MAX_STAGING_BYTES | 4294967296；含预留、.part、源文件和验证副本 |
+| CWA_MAX_UPLOAD_BYTES | MAX_FILE_BYTES + 65536；整个 multipart 上限 |
+| ZLIB_DOMAIN / ZLIB_SESSION_FILE | 可留空以只用 CWA；可信入口及私有会话文件 |
+| ZLIB_MODE | eapi；首版只启用已验证通路 |
+| ZLIB_FILE_ORIGINS | 可空；逗号分隔的额外精确 origin，仅填经核实的书源 CDN |
+| GOMEMLIMIT | Compose 为 64MiB；不是 RSS 硬限制 |
+| CWA_DEBUG_METRICS_FILE | 默认禁用；测试时写私有 heap/goroutine JSON，无 HTTP debug 端点 |
 
-MCP_TOKEN_FILE、TICKET_KEY_FILE 和密码文件只读挂载。ZLIB_SESSION_FILE 位于本服务私有状态目录，适配器需要保存刷新后的登录状态时允许安全写回，不能一律只读挂载导致刷新失败。日志不打印配置秘密、完整 Cookie、签名 URL 或上传正文。
+客户端不能传任意 URL、服务器路径或源站凭据。上游只访问配置的 origin，最多五次重定向，跨 origin 不转发认证头和 Cookie。书源元数据串行；压缩前/解压后各至多 4 MiB，每次 10 秒，控制查询总计 30 秒。文件最长 30 分钟、停滞 60 秒，复制缓冲固定 64 KiB。
 
-不把生产配置复制到仓库。后续提供 .env.example 和 Compose 示例时只包含占位符。
+## 书源会话
 
-## MCPHub 配置草案
+服务消费已有合法会话，不保存书源账号密码，不自动处理验证码。会话文件至多 64 KiB，权限 0600，格式如下；值只是占位符：
 
-~~~json
-{
-  "mcpServers": {
-    "cwa-books": {
-      "type": "streamable-http",
-      "url": "http://cwa-book-mcp:8080/mcp",
-      "headers": {
-        "Authorization": "Bearer <MCP_SERVICE_TOKEN>"
-      },
-      "perSessionClient": false,
-      "enabled": true
-    }
-  }
-}
-~~~
+```json
+{"cookies":{"remix_userid":"<SOURCE_USER_ID>","remix_userkey":"<SOURCE_USER_KEY>"}}
+```
 
-这是待对照实际 MCPHub 版本验证的结构示例。内网上游地址可能需要在 MCPHub 的允许网络配置中显式放行。不要把示例占位符当成有效令牌。
+Compose 路径为 `/data/state/zlib-session.json`。会话失效后操作者安全替换文件；适配器每次操作重新读取，无须向设备发凭据。认证、验证码或额度错误使任务 blocked，恢复后显式 retry。未配置书源时 CWA 仍可读；需要书源却不可用时返回 partial 和原因，不声称没有中文。
 
-MCPHub 的对外认证和本服务的上游认证是两层独立配置。设备只配置 MCPHub 工具入口，文件票据由工具动态返回；无需每台设备保存 CWA 账号。
+## MCPHub 与文件操作
 
-## 首次接入检查
+[mcphub.json](../examples/mcphub.json) 是聚合示例。操作者替换 Bearer，并按实际 MCPHub 版本确认协议和上游网络允许规则；示例不能作为目标兼容证据。
 
-1. 确认实际 CWA 是 Calibre-Web Automated，并记录版本。
-2. 验证服务账号具备搜索、下载和新书上传权限。
-3. 记录转换目标、保留格式、忽略格式、自动合并和自动清理设置；不由程序修改。
-4. 从本服务所在位置验证 CWA_BASE_URL，而不是只验证浏览器可访问。
-5. 验证 PUBLIC_BASE_URL 对设备可达；沿用现有穿透方式，不由程序自动配置域名。
-6. 验证 MCPHub 与首个 Agent 的协议、文件读写和 HTTP 能力。
-7. 用可丢弃的合成书执行一次真实上传、转换、下载验收，并确认资源报告。
+- 现有 CWA 书：search_books → 选候选/已有格式 → get_download_url → 完整 GET。
+- 新书：search_books → 用户选择 → acquire_book(start) → get_task → ready 后取 CWA 链接。
+- 本地书：upload_book(prepare) → 按返回 url/headers 完整 PUT → get_task。
 
-## 大文件与 Cloudflare
+PUT 必须带 Content-Length 和 application/octet-stream；失败从头传。响应丢失先 get_task；完整文件已接收时重复 PUT 不覆盖、不重复提交。下载不支持 Range。代理访问日志须脱敏签名路径/查询字符串，链接不进入共享文档或代理缓存；上游 Cookie 不转发给设备。
 
-官方文档当前列出 Free/Pro 的单请求上传上限为 100 MB；实际区域设置还可能更低，部署时重新核对。
+## 启用写入与大文件
 
-- 设备 → 本服务：首版是完整单次 PUT；MAX_FILE_BYTES 必须小于等于该段实际请求上限。
-- 本服务 → CWA：完整 multipart 文件，CWA_MAX_UPLOAD_BYTES 还要为头部、CSRF 字段与边界留出空间。
-- 允许的文件大小取应用配置与两段通路上限中的较小值；通路上限由操作者填写，不宣称能自动探测未知代理限制。MB 与 MiB 应转换为字节再比较。
-- 例如某段已确认上限为 100 MB 时，可以把 MAX_FILE_BYTES 收紧到 90 MiB，为协议开销留余量；不按 512 MiB 应用默认值直接放行。
-- 大文件需要每一段都能承受完整请求。CWA 内网地址只解决第二段，不能解决设备入口的限制。
-- 首版不通过应用分块规避此限制；若以后确有大文件需求，再单独评估续传。HTTP chunked encoding 也不等于多个请求。
+操作者记录实际 CWA 版本、搜索/下载/上传权限、转换目标、保留/忽略格式、自动合并、元数据与清理设置；填写真实输入/输出声明和两段完整请求上限后才启用 CWA_WRITE_ENABLED。用可丢弃合成书验证上传、转换和下载及首个 Agent 的文件能力。程序不调整 CWA 配置；首版没有译本隔离或事务性不覆盖保证。
 
-引用：[Cloudflare 413 文档](https://developers.cloudflare.com/support/troubleshooting/http-status-codes/4xx-client-error/error-413/)、[MCPHub 配置](https://docs.mcphub.app/configuration/mcp-settings)。
+流式传输不能绕过代理限制。设备→服务为完整 PUT，服务→CWA 为完整 multipart，后者预留 64 KiB。应用默认 512 MiB 不表示外网允许。若已确认某段只有 100 MB，可将 MAX_FILE_BYTES 收紧到 94371840（90 MiB），第二段上限也按实际填写。CWA 内网地址只解决第二段。实际限制重新核对[Cloudflare 官方说明](https://developers.cloudflare.com/support/troubleshooting/http-status-codes/4xx-client-error/error-413/)。
 
-## 升级、备份与恢复
+## 升级、备份、恢复
 
-- 发布时固定镜像标签/摘要和依赖版本；升级前备份本服务状态。
-- bbolt 使用事务内一致性备份，或停止服务后复制；不得不加说明地复制正写入的文件。
-- 任务数据库与完整暂存文件需要对应；只备份数据库时标明某些输入需要重新获取。设备上传的未完成 .part 文件不恢复偏移，重启后从头发送。
-- schema 升级先备份、明确版本迁移；失败时保留旧库，不自动清空。
-- 进程恢复先核对可能已经提交到 CWA 的任务，不直接重跑所有任务。
-- CWA 本身的备份由其现有运维负责，本服务不替代书库备份。
+停止本服务后复制 STATE_DIR 与对应完整 STAGING_DIR 到私有备份，不在写入中直接复制 bbolt。CWA 书库由其现有运维独立备份。schema_version 不兼容时启动失败并保留旧库，一个 state.db 只允许一个实例。
 
-## 故障处理
+重启清理 .part、验证已发布成品并补记 queued；submitting/uncertain/reconciling 保留截止时间、先查库。只备份数据库导致输入缺失时：设备文件重新 prepare，源文件可重新获取，但可能已提交任务仍先核对。取消不删除 CWA 记录。
+任务最长 24 小时，含 awaiting_upload/blocked/needs_review；终态最多 1000 条、最长 7 天，幂等记录随历史清理。ready/failed/cancelled 暂存文件在结束或下次启动清理。
 
-| 现象 | 操作方向 |
+| 故障 | 操作 |
 | --- | --- |
-| AUTH_EXPIRED / CAPTCHA_REQUIRED | 在服务端恢复账号状态，然后显式重试任务 |
-| CWA 上传返回 200 但长期不可下载 | 检查权限、格式规则和 CWA 日志；保持未确认，不反复上传 |
-| 多个候选匹配 | 用户选择 CWA 候选，服务验证后 resolve |
-| 没有可确认候选 | 重新 search_books 获取 CWA 候选；用户确认后 resolve，不能直接改成 ready |
-| 不再需要的等待/阻塞任务 | acquire_book 的 cancel 释放本服务资源；已发生的 CWA 上传不会撤销 |
-| 413 | 区分设备上传段和 CWA 上传段，核对通路限制 |
-| OOM 或 RSS 超标 | 保存脱敏性能摘要，分析分配/并发/响应限制，不直接扩大门槛 |
-| 暂存空间耗尽 | 停止接收新任务，执行本服务到期清理，保留 CWA 书籍 |
-| 书源请求长时间不取消 | 修复 adapter 的真正超时/取消，不只是缩短工具等待时间 |
+| AUTH_EXPIRED / CAPTCHA_REQUIRED / QUOTA_EXCEEDED | 恢复合法会话/权限，再显式 retry |
+| WRITES_DISABLED | 操作者确认规则后启用写入 |
+| HTTP 200 未 ready / UPLOAD_OUTCOME_UNKNOWN | 检查 CWA，保持核对，不重复上传 |
+| AMBIGUOUS_CWA_MATCH / IMPORT_UNCONFIRMED | 选择任务候选，或重新搜索 CWA 后 resolve |
+| LENGTH_MISMATCH / CHECKSUM_MISMATCH | .part 已清理，重新完整 PUT |
+| FILE_TOO_LARGE / 413 | 区分两段通路，收紧字节上限 |
+| STORAGE_FULL / BUSY | 取消不需要的任务、处理磁盘余量或等待 |
+| CWA 记录被删/HTML 错误页/无权限 | 报告失效，不回退到书源或暂存 |
+| RSS/OOM | 保存私有摘要，分析资源生命周期，不提高 128 MiB 门槛 |
 
-详细失败语义以 [接口契约](../plan/03-contracts.md) 为准。
+## 复现验收
+
+真实书源账号不进入公共 CI。操作者准备隔离原版 CWA、安全设置 CWA_BASE_URL/CWA_USERNAME/CWA_PASSWORD_FILE 后，显式运行：
+
+```sh
+CWA_INTEGRATION=1 go test -tags integration ./internal/integration -v -timeout 10m
+```
+
+测试只上传原创 EPUB/PDF，不调整 CWA 设置。acceptance workflow 使用固定版本原版 CWA 和独立临时书库，结束删除测试容器，不连接现有部署。
+
+```sh
+docker build --build-arg TARGETARCH=amd64 -t cwa-book-mcp:acceptance .
+go run ./tools/bench -docker-image cwa-book-mcp:acceptance -work .work/bench-new -report .work/resources.json -idle 5m -stable 30m -sequential 100 -history 1000
+go run ./tools/check-report .work/resources.json
+```
+
+使用新的 -work 目录。报告分别记录 RSS/HWM、heap、goroutine、FD、cgroup current/peak/max/anon/file、OOM 与哈希。Windows WorkingSet/handles 不替代 Linux/容器证据；arm64 在原生 runner 实测。

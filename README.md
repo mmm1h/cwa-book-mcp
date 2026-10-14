@@ -2,7 +2,7 @@
 
 让多设备上的 Agent 通过 MCPHub 搜书、获取新书、上传本地书籍，并统一从 Calibre-Web Automated（CWA）取书。
 
-**当前只有规划与交接文档，没有应用代码、可运行镜像或性能实测结果。** 开发进度以 [plan/README.md](plan/README.md) 为准。
+**应用已实现，本地受控闭环和并发检查通过。** 原版 CWA、资源与目标实例的具体状态以 [plan/README.md](plan/README.md) 为准；模拟结果不代表已部署。
 
 默认中文优先：CWA 中文 → Z-Library 中文 → CWA 其他语言 → Z-Library 其他语言。搜索与获取分开，用户选定书籍后才下载。
 
@@ -15,7 +15,14 @@
 - 不修改、分叉或注入 CWA 源码，不直接写入 Calibre 数据库。
 - 首版不处理译者、版次隔离，不改写书名或嵌入任务标签。
 - 文件流式传输到磁盘，任务持久化，客户端断开后任务继续。
-- 内存是发布门槛：空闲 RSS ≤ 32 MiB、规定负载峰值 RSS ≤ 96 MiB，128 MiB 容器内通过测试。这些是目标，**尚未实测**；口径见 [内存预算](plan/02-stack-and-memory.md)。
+- 首版支持 EPUB/PDF，写入默认关闭；由操作者核对 CWA 标准设置后启用。
+- 内存发布门槛：空闲 RSS ≤32 MiB、规定负载峰值 ≤96 MiB、128 MiB 容器内完成负载。实际结果见 [资源报告](docs/benchmarks/README.md)，口径见 [内存预算](plan/02-stack-and-memory.md)。
+
+固定 Go 1.27.2。`go vet ./...`、`go test ./... -timeout 90s`、`go build ./cmd/cwa-book-mcp` 可完成本地检查与构建。
+
+五个工具：search_books、acquire_book、upload_book、get_task、get_download_url。/mcp 使用 Bearer，文件接口使用短期票据；只有实际验证到 CWA 所需格式才 ready，上传响应不代表入库成功。
+
+复制 `.env.example`，准备私有秘密文件并核对格式和代理规则后，使用 `docker compose build` / `up -d`。配置、UID 权限、MCPHub 示例、升级备份与故障处理见 [运行文档](docs/operations.md)。
 
 ## 从这里开始
 
@@ -27,6 +34,6 @@
 | 看技术栈与低内存约束 | [技术栈与内存](plan/02-stack-and-memory.md) |
 | 查某项接口或验收要求 | [文档导航](docs/README.md) |
 
-这里描述的是待实现的设计。MCPHub 统一配置工具入口；文件传输使用同一服务签发的临时地址，Agent 仍需具备本地文件读写及 HTTP 能力。
+MCPHub 统一配置工具入口；文件传输使用同一服务签发的临时地址，Agent 仍需具备本地文件读写及 HTTP 能力。首版不支持 Range 或应用分块。
 
-许可证：[MIT](LICENSE)。通过 HTTP 使用的 CWA 和其他上游项目保留各自许可证。
+许可证：[MIT](LICENSE)、[固定第三方依赖原始许可证](third_party/licenses/README.md)。通过 HTTP 使用的 CWA 保留其许可证。

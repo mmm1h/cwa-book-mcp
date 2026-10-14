@@ -291,12 +291,12 @@ func CheckFileResponse(resp *http.Response, format string) error {
 }
 func csrf(data []byte) (string, bool) {
 	z := html.NewTokenizer(strings.NewReader(string(data)))
-	login := false
+	username, password := false, false
 	token := ""
 	for {
 		kind := z.Next()
 		if kind == html.ErrorToken {
-			return token, login
+			return token, username && password
 		}
 		if kind != html.StartTagToken && kind != html.SelfClosingTagToken {
 			continue
@@ -318,7 +318,10 @@ func csrf(data []byte) (string, bool) {
 			token = value
 		}
 		if name == "password" {
-			login = true
+			password = true
+		}
+		if name == "username" {
+			username = true
 		}
 	}
 }

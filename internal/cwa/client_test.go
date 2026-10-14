@@ -13,6 +13,17 @@ import (
 	"testing"
 )
 
+func TestProfilePasswordFieldIsNotLogin(t *testing.T) {
+	_, login := csrf([]byte(`<form><input name="csrf_token" value="synthetic"><input name="password" autocomplete="off"></form>`))
+	if login {
+		t.Fatal("profile confused with login")
+	}
+	_, login = csrf([]byte(`<form class="cwa-login-form"><input name="csrf_token" value="synthetic"><input name="username"><input name="password" autocomplete="current-password"></form>`))
+	if !login {
+		t.Fatal("login not detected")
+	}
+}
+
 func TestOriginalFeedShapeAndVirtualPagination(t *testing.T) {
 	var b bytes.Buffer
 	testfixture.PDF(&b, 1024)

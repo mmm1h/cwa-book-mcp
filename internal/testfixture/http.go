@@ -68,7 +68,7 @@ func (f *CWA) serve(w http.ResponseWriter, r *http.Request) {
 			}
 			http.SetCookie(w, &http.Cookie{Name: "session", Value: "synthetic-cookie", Path: "/", HttpOnly: true})
 		}
-		io.WriteString(w, `<form><input name="csrf_token" value="synthetic-csrf"><input name="password"></form>`)
+		io.WriteString(w, `<form class="cwa-login-form"><input name="csrf_token" value="synthetic-csrf"><input name="username"><input name="password"></form>`)
 		return
 	}
 	if path == "/me" {
@@ -77,7 +77,7 @@ func (f *CWA) serve(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, "/login", 302)
 			return
 		}
-		io.WriteString(w, `<input name="csrf_token" value="synthetic-csrf"><p>synthetic protected page</p>`)
+		io.WriteString(w, `<input name="csrf_token" value="synthetic-csrf"><input name="password" autocomplete="off"><p>synthetic protected page</p>`)
 		return
 	}
 	if path == "/upload" {
