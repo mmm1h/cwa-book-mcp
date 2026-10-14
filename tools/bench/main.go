@@ -34,11 +34,12 @@ import (
 )
 
 type sample struct {
-	At          time.Time `json:"at"`
-	Phase       string    `json:"phase"`
-	RSS         uint64    `json:"rss_bytes"`
-	HWM         uint64    `json:"hwm_bytes"`
-	FDOrHandles int       `json:"fd_or_handles"`
+	At           time.Time `json:"at"`
+	Phase        string    `json:"phase"`
+	RSS          uint64    `json:"rss_bytes"`
+	HWM          uint64    `json:"hwm_bytes"`
+	FDOrHandles  int       `json:"fd_or_handles"`
+	StateDBBytes int64     `json:"state_db_bytes"`
 	diagnostics.Metrics
 	Cgroup map[string]uint64 `json:"cgroup"`
 }
@@ -51,10 +52,13 @@ type phaseResult struct {
 }
 type report struct {
 	OS, Arch, GoVersion, Service, ContainerImage string
+	Commit, Platform                             string
+	HostCPUs                                     int
 	Started, Finished                            time.Time
 	IdleSeconds, StableSeconds                   float64
 	HistoryTasks, SequentialTasks                int
 	BackpressureResponses                        int
+	FaultChecks                                  map[string]bool
 	Phases                                       []phaseResult
 	Samples                                      []sample
 	OOMKilled                                    bool
@@ -96,6 +100,7 @@ type bench struct {
 	sess                  *sdk.ClientSession
 	base, work, container string
 	app                   *exec.Cmd
+	binary, token         string
 	log                   *os.File
 	wait                  chan error
 	fixture               *testfixture.CWA
@@ -136,7 +141,16 @@ func run() error {
 		return e
 	}
 	b := &bench{work: abs, metrics: filepath.Join(abs, "metrics.json"), phase: "startup", wait: make(chan error, 1)}
-	b.report = report{OS: runtime.GOOS, Arch: runtime.GOARCH, GoVersion: runtime.Version(), Service: *binary, ContainerImage: *image, Started: time.Now().UTC(), HistoryTasks: *history, Gates: map[string]bool{}, Limitations: []string{}}
+	b.report = report{OS: runtime.GOOS, Arch: runtime.GOARCH, GoVersion: runtime.Version(), Service: *binary, ContainerImage: *image, Started: time.Now().UTC(), HistoryTasks: *history, FaultChecks: map[string]bool{}, Gates: map[string]bool{}, Limitations: []string{}}
+	b.report.HostCPUs = runtime.NumCPU()
+	if revision, err := exec.Command("git", "rev-parse", "HEAD").Output(); err == nil {
+		b.report.Commit = strings.TrimSpace(string(revision))
+	}
+	if runtime.GOOS == "linux" {
+		if platform, err := exec.Command("uname", "-sr").Output(); err == nil {
+			b.report.Platform = strings.TrimSpace(string(platform))
+		}
+	}
 	defer func() {
 		b.report.Finished = time.Now().UTC()
 		b.mu.Lock()
@@ -160,6 +174,11 @@ func run() error {
 	}
 	b.report.IdleSeconds = time.Since(started).Seconds()
 	b.capture()
+	b.setPhase("lifecycle-faults")
+	fmt.Println("128 MiB lifecycle faults started")
+	if e = b.faults(ctx); e != nil {
+		return e
+	}
 	for _, part := range strings.Split(*sizes, ",") {
 		size, e := strconv.ParseInt(part, 10, 64)
 		if e != nil || size < 1024 || size > 1<<30 {
@@ -246,6 +265,7 @@ func (b *bench) start(ctx context.Context, binary, image string, history int) er
 		return e
 	}
 	token, key := domain.ID()+domain.ID(), domain.ID()+domain.ID()
+	b.token = token
 	for name, content := range map[string]string{"mcp-token": token, "ticket-key": key, "cwa-password": "synthetic", "session.json": `{"cookies":{"remix_userid":"synthetic","remix_userkey":"synthetic"}}`} {
 		if e = os.WriteFile(filepath.Join(b.work, name), []byte(content), 0600); e != nil {
 			return e
@@ -268,6 +288,7 @@ func (b *bench) start(ctx context.Context, binary, image string, history int) er
 		if e != nil {
 			return e
 		}
+		b.binary = bin
 		b.app = exec.Command(bin)
 		b.app.Env = append(os.Environ(), env...)
 	} else {
@@ -315,9 +336,13 @@ func (b *bench) start(ctx context.Context, binary, image string, history int) er
 			return e
 		}
 	}
+	return b.connect(ctx)
+}
+func (b *bench) connect(ctx context.Context) error {
 	c := sdk.NewClient(&sdk.Implementation{Name: "synthetic-benchmark", Version: "1"}, nil)
-	b.sess, e = c.Connect(ctx, &sdk.StreamableClientTransport{Endpoint: b.base + "/mcp", HTTPClient: &http.Client{Transport: auth{token}}, DisableStandaloneSSE: true, MaxRetries: -1}, nil)
-	return e
+	var err error
+	b.sess, err = c.Connect(ctx, &sdk.StreamableClientTransport{Endpoint: b.base + "/mcp", HTTPClient: &http.Client{Transport: auth{b.token}}, DisableStandaloneSSE: true, MaxRetries: -1}, nil)
+	return err
 }
 func (b *bench) stop() {
 	if b.sess != nil {
@@ -327,7 +352,7 @@ func (b *bench) stop() {
 		if b.container != "" {
 			_ = exec.Command("docker", "stop", "--time", "15", b.container).Run()
 			data, _ := exec.Command("docker", "inspect", "--format", "{{.State.OOMKilled}}", b.container).Output()
-			b.report.OOMKilled = strings.TrimSpace(string(data)) == "true"
+			b.report.OOMKilled = b.report.OOMKilled || strings.TrimSpace(string(data)) == "true"
 			_ = exec.Command("docker", "rm", b.container).Run()
 		} else {
 			_ = b.app.Process.Kill()
@@ -349,7 +374,10 @@ func (b *bench) stop() {
 }
 func (b *bench) setPhase(s string) { b.mu.Lock(); b.phase = s; b.mu.Unlock() }
 func (b *bench) capture() {
-	rss, hwm, fd, e := processStats(b.pid)
+	b.mu.Lock()
+	pid, phase := b.pid, b.phase
+	b.mu.Unlock()
+	rss, hwm, fd, e := processStats(pid)
 	if e != nil {
 		return
 	}
@@ -358,9 +386,11 @@ func (b *bench) capture() {
 	if e == nil {
 		_ = json.Unmarshal(data, &metrics)
 	}
-	s := sample{At: time.Now().UTC(), RSS: rss, HWM: hwm, FDOrHandles: fd, Metrics: metrics, Cgroup: cgroupStats(b.pid)}
+	s := sample{At: time.Now().UTC(), Phase: phase, RSS: rss, HWM: hwm, FDOrHandles: fd, Metrics: metrics, Cgroup: cgroupStats(pid)}
+	if st, err := os.Stat(filepath.Join(b.work, "state", "state.db")); err == nil {
+		s.StateDBBytes = st.Size()
+	}
 	b.mu.Lock()
-	s.Phase = b.phase
 	if len(b.report.Samples) < 8192 {
 		b.report.Samples = append(b.report.Samples, s)
 	}
@@ -604,7 +634,7 @@ func (b *bench) evaluate() {
 		if s.Phase == "idle" {
 			idle = max(idle, s.RSS)
 		}
-		peak = max(peak, s.RSS)
+		peak = max(peak, s.RSS, s.HWM)
 		if s.Phase == "stability" {
 			if first == nil {
 				first = s
@@ -635,6 +665,10 @@ func (b *bench) evaluate() {
 	b.report.Gates["file_size_rss_delta_16_mib"] = small > 0 && large > 0 && (large <= small || large-small <= 16<<20)
 	b.report.Gates["100_sequential_jobs"] = b.report.SequentialTasks >= 100
 	b.report.Gates["1000_history_tasks"] = b.report.HistoryTasks == 1000
+	b.report.Gates["lifecycle_faults"] = len(b.report.FaultChecks) == 4
+	for _, pass := range b.report.FaultChecks {
+		b.report.Gates["lifecycle_faults"] = b.report.Gates["lifecycle_faults"] && pass
+	}
 	if runtime.GOOS != "linux" {
 		b.report.Limitations = append(b.report.Limitations, "Windows WorkingSet/PeakWorkingSet and handle count are not Linux RSS/cgroup/FD acceptance evidence")
 	}

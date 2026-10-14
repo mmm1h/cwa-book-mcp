@@ -26,7 +26,7 @@ func main() {
 		panic("Linux load did not complete without OOM")
 	}
 	failed := false
-	for _, key := range []string{"idle_5_minutes_rss_32_mib", "peak_rss_96_mib", "cgroup_128_mib", "stability_30_minutes", "file_size_rss_delta_16_mib", "100_sequential_jobs", "1000_history_tasks"} {
+	for _, key := range []string{"idle_5_minutes_rss_32_mib", "peak_rss_96_mib", "cgroup_128_mib", "stability_30_minutes", "file_size_rss_delta_16_mib", "100_sequential_jobs", "1000_history_tasks", "lifecycle_faults"} {
 		pass := r.Gates[key]
 		fmt.Printf("%s=%v\n", key, pass)
 		if !pass {
