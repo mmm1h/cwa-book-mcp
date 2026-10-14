@@ -253,7 +253,40 @@ func Validate(ctx context.Context, path, format string, max int64) error {
 	}
 	count := binary.LittleEndian.Uint16(tail[i+10:])
 	cdSize := binary.LittleEndian.Uint32(tail[i+12:])
-	if count == 0 || count > 2048 || cdSize > 2<<20 || i+22+int(binary.LittleEndian.Uint16(tail[i+20:])) != len(tail) {
+	cdOffset := int64(binary.LittleEndian.Uint32(tail[i+16:]))
+	endOffset := st.Size() - n + int64(i)
+	if count == 0 || count > 2048 || cdSize > 2<<20 || i+22+int(binary.LittleEndian.Uint16(tail[i+20:])) != len(tail) ||
+		binary.LittleEndian.Uint16(tail[i+4:]) != 0 || binary.LittleEndian.Uint16(tail[i+6:]) != 0 ||
+		binary.LittleEndian.Uint16(tail[i+8:]) != count || cdOffset+int64(cdSize) != endOffset {
+		return invalid()
+	}
+	// archive/zip reads until the directory signature ends; it deliberately
+	// accepts the entry count modulo 65536 and may ignore a forged directory
+	// size. Check the actual bounded directory before it allocates File records.
+	position := cdOffset
+	for j := 0; j < int(count); j++ {
+		var header [46]byte
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if position+int64(len(header)) > endOffset {
+			return invalid()
+		}
+		if _, err := f.ReadAt(header[:], position); err != nil || string(header[:4]) != "PK\x01\x02" {
+			return invalid()
+		}
+		name := int64(binary.LittleEndian.Uint16(header[28:]))
+		extra := int64(binary.LittleEndian.Uint16(header[30:]))
+		comment := int64(binary.LittleEndian.Uint16(header[32:]))
+		if name == 0 || name > 512 {
+			return invalid()
+		}
+		position += int64(len(header)) + name + extra + comment
+		if position > endOffset {
+			return invalid()
+		}
+	}
+	if position != endOffset {
 		return invalid()
 	}
 	z, e := zip.NewReader(f, st.Size())
@@ -261,6 +294,12 @@ func Validate(ctx context.Context, path, format string, max int64) error {
 		return invalid()
 	}
 	var total uint64
+	expansionLimit := uint64(max)
+	if expansionLimit > (1<<63-2)/4 {
+		expansionLimit = 1<<63 - 2
+	} else {
+		expansionLimit *= 4
+	}
 	seen := map[string]bool{}
 	haveMime, havePackage := false, false
 	var packagePath string
@@ -273,10 +312,10 @@ func Validate(ctx context.Context, path, format string, max int64) error {
 			return invalid()
 		}
 		seen[entry.Name] = true
-		total += entry.UncompressedSize64
-		if total > uint64(max)*4 || entry.UncompressedSize64 > uint64(max)*4 {
+		if entry.UncompressedSize64 > expansionLimit-total {
 			return invalid()
 		}
+		total += entry.UncompressedSize64
 		r, e := entry.Open()
 		if e != nil {
 			return invalid()
@@ -299,14 +338,15 @@ func Validate(ctx context.Context, path, format string, max int64) error {
 					Path string `xml:"full-path,attr"`
 				} `xml:"rootfiles>rootfile"`
 			}
-			e := xml.NewDecoder(io.LimitReader(r, 64<<10)).Decode(&container)
+			e = xml.NewDecoder(io.LimitReader(r, 64<<10)).Decode(&container)
 			if e != nil || len(container.Rootfiles) == 0 {
 				r.Close()
 				return invalid()
 			}
 			packagePath = container.Rootfiles[0].Path
+			_, e = io.CopyBuffer(io.Discard, ctxReader{ctx, r}, buf)
 		default:
-			_, e = io.CopyBuffer(io.Discard, ctxReader{ctx, io.LimitReader(r, int64(max)*4+1)}, buf)
+			_, e = io.CopyBuffer(io.Discard, ctxReader{ctx, io.LimitReader(r, int64(expansionLimit)+1)}, buf)
 		}
 		if closeErr := r.Close(); e != nil || closeErr != nil {
 			return invalid()

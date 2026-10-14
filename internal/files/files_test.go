@@ -1,10 +1,13 @@
 package files
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -14,6 +17,73 @@ import (
 	"github.com/mmm1h/cwa-book-mcp/internal/domain"
 	"github.com/mmm1h/cwa-book-mcp/internal/testfixture"
 )
+
+func TestForgedZIPDirectoryRejectedBeforeAllocation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "forged.epub")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	z := zip.NewWriter(f)
+	for i := 0; i < 5000; i++ {
+		if _, err = z.CreateHeader(&zip.FileHeader{Name: fmt.Sprintf("entry-%05d", i), Method: zip.Store}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = z.Close(); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	f, err = os.OpenFile(path, os.O_RDWR, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, _ := f.Stat()
+	var end [22]byte
+	if _, err = f.ReadAt(end[:], st.Size()-22); err != nil {
+		t.Fatal(err)
+	}
+	// Lie about count and size while leaving the real directory reachable.
+	binary.LittleEndian.PutUint16(end[8:], 1)
+	binary.LittleEndian.PutUint16(end[10:], 1)
+	binary.LittleEndian.PutUint32(end[12:], 1)
+	if _, err = f.WriteAt(end[:], st.Size()-22); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	allocations := testing.AllocsPerRun(2, func() {
+		if err := Validate(context.Background(), path, "epub", 4<<20); err == nil {
+			t.Fatal("forged directory accepted")
+		}
+	})
+	if allocations > 256 {
+		t.Fatalf("forged directory allocated %.0f objects before rejection", allocations)
+	}
+}
+
+func TestEPUBContainerChecksumIsVerified(t *testing.T) {
+	var b bytes.Buffer
+	if err := testfixture.EPUB(&b); err != nil {
+		t.Fatal(err)
+	}
+	data := b.Bytes()
+	start := bytes.Index(data, []byte("PK\x01\x02"))
+	for start >= 0 && start+46 <= len(data) {
+		nameLength := int(binary.LittleEndian.Uint16(data[start+28:]))
+		if string(data[start+46:start+46+nameLength]) == "META-INF/container.xml" {
+			data[start+16] ^= 1 // A valid XML body with a deliberately invalid CRC.
+			break
+		}
+		start += 46 + nameLength + int(binary.LittleEndian.Uint16(data[start+30:])) + int(binary.LittleEndian.Uint16(data[start+32:]))
+	}
+	path := filepath.Join(t.TempDir(), "bad-crc.epub")
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Validate(context.Background(), path, "epub", 1<<20); err == nil {
+		t.Fatal("container checksum was ignored")
+	}
+}
 
 func TestSyntheticFormatsAndInvalidFiles(t *testing.T) {
 	for _, format := range []string{"epub", "pdf"} {
