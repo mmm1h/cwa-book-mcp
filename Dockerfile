@@ -1,4 +1,4 @@
-FROM golang:1.27.2 AS build
+FROM --platform=$BUILDPLATFORM golang:1.27.2 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 COPY third_party/zlib ./third_party/zlib
@@ -6,8 +6,8 @@ RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal
 COPY third_party/licenses ./third_party/licenses
-ARG TARGETOS=linux
-ARG TARGETARCH=amd64
+ARG TARGETOS
+ARG TARGETARCH
 ARG VERSION=dev
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w -X main.version=$VERSION" -o /out/cwa-book-mcp ./cmd/cwa-book-mcp && mkdir -p /out/data/state /out/data/staging && chmod 700 /out/data/state /out/data/staging
 
