@@ -1,27 +1,13 @@
-# Local credentials and runtime state
+.tools/
+.work/
+dist/
+state/
+staging/
+secrets/
 .env
-.env.*
-!.env.example
-/secrets/
-/data/
-/state/
-/staging/
-/local/
-/tmp/
-*.log
-
-# Go outputs and profiling captures
-/bin/
-/dist/
-/coverage/
+*.db
+*.db.lock
+*.part
 *.test
 *.exe
-*.prof
-*.pprof
 coverage.out
-
-# Editor and OS files
-.DS_Store
-Thumbs.db
-.vscode/
-.idea/
