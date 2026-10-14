@@ -405,12 +405,18 @@ func (s *Service) Receive(ctx context.Context, id string, r io.Reader, length in
 		return t, e
 	}
 	defer done()
+	interrupted := make(chan struct{})
 	interrupt := context.AfterFunc(ctx, func() {
+		defer close(interrupted)
 		if closer, ok := r.(io.Closer); ok {
 			_ = closer.Close()
 		}
 	})
-	defer interrupt()
+	defer func() {
+		if !interrupt() {
+			<-interrupted
+		}
+	}()
 	if e = s.Files.Acquire(ctx); e != nil {
 		return t, e
 	}

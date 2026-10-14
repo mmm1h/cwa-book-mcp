@@ -43,15 +43,16 @@ func adapt[I any](fn func(context.Context, I) (any, error)) sdk.ToolHandlerFor[I
 		v, e := fn(ctx, a)
 		if e != nil {
 			d := domain.AsError(e)
-			b, _ := json.Marshal(map[string]any{"error": d})
-			return &sdk.CallToolResult{IsError: true, StructuredContent: map[string]any{"error": d}, Content: []sdk.Content{&sdk.TextContent{Text: string(b)}}}, nil, nil
+			// The typed SDK handler writes its second return value over
+			// StructuredContent. Return errors through that value as well.
+			return &sdk.CallToolResult{IsError: true}, map[string]any{"error": d}, nil
 		}
 		b, e := json.Marshal(v)
 		if e != nil {
 			return nil, nil, e
 		}
 		if len(b) > 128<<10 {
-			return &sdk.CallToolResult{IsError: true, Content: []sdk.Content{&sdk.TextContent{Text: `{"error":{"code":"RESULT_TOO_LARGE","message":"请缩小查询范围"}}`}}}, nil, nil
+			return &sdk.CallToolResult{IsError: true}, map[string]any{"error": domain.E("RESULT_TOO_LARGE", "请缩小查询范围")}, nil
 		}
 		var out map[string]any
 		if e = json.Unmarshal(b, &out); e != nil {

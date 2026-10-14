@@ -91,7 +91,7 @@ func save(tx *bolt.Tx, t domain.Task) error {
 		if domain.Terminal(previous.State) {
 			bucket(tx, "history").Delete([]byte(timeKey(previous.Updated, t.ID)))
 		}
-		if previous.ExactKey != "" {
+		if previous.ExactKey != "" && bytes.Equal(bucket(tx, "exact").Get([]byte(previous.ExactKey)), []byte(t.ID)) {
 			bucket(tx, "exact").Delete([]byte(previous.ExactKey))
 		}
 	}
@@ -103,7 +103,7 @@ func save(tx *bolt.Tx, t domain.Task) error {
 		if e := bucket(tx, "active").Put([]byte(t.ID), []byte(t.ID)); e != nil {
 			return e
 		}
-		if t.ExactKey != "" {
+		if t.ExactKey != "" && time.Now().Before(t.Expires) {
 			if e := bucket(tx, "exact").Put([]byte(t.ExactKey), []byte(t.ID)); e != nil {
 				return e
 			}

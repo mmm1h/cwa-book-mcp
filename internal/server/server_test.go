@@ -1,10 +1,13 @@
 package server
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -217,6 +220,57 @@ func TestUploadHTTPAuthReplayAndErrors(t *testing.T) {
 	if e != nil || !bad.IsError {
 		t.Fatal(bad, e)
 	}
+	var business struct {
+		Error domain.Error `json:"error"`
+	}
+	resultJSON, e := json.Marshal(bad.StructuredContent)
+	if e != nil || json.Unmarshal(resultJSON, &business) != nil || business.Error.Code != "INVALID_ARGUMENT" {
+		t.Fatalf("business error was lost from structuredContent: %s %v", resultJSON, e)
+	}
+}
+
+func TestStalledHTTPUploadCancellation(t *testing.T) {
+	a, lib, _, _ := setup(t)
+	ts := httptest.NewServer(a.Handler("test"))
+	defer ts.Close()
+	a.Jobs.Config.PublicURL = ts.URL
+	client := connect(t, ts.URL, string(a.Jobs.Config.MCPToken))
+	var upload jobs.UploadResult
+	call(t, client, "upload_book", map[string]any{"action": "prepare", "request_id": "stalled", "title": "合成测试书", "filename": "synthetic.pdf", "size_bytes": 32768}, &upload)
+	conn, err := net.Dial("tcp", strings.TrimPrefix(ts.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	fmt.Fprintf(conn, "PUT %s HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/octet-stream\r\nContent-Length: 32768\r\n\r\n", strings.TrimPrefix(upload.URL, ts.URL))
+	if _, err = conn.Write(make([]byte, 4096)); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		task, err := a.Jobs.Store.Get(upload.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if task.Received > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("HTTP upload did not start")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	var cancelled jobs.TaskResult
+	call(t, client, "acquire_book", map[string]any{"action": "cancel", "request_id": "stop", "task_id": upload.ID}, &cancelled)
+	conn.SetReadDeadline(time.Now().Add(time.Second))
+	resp, err := http.ReadResponse(bufio.NewReader(conn), &http.Request{Method: "PUT"})
+	if err != nil {
+		t.Fatal("stalled HTTP reader was not interrupted", err)
+	}
+	resp.Body.Close()
+	if cancelled.State != "cancelled" || resp.StatusCode == 202 || lib.Uploads.Load() != 0 {
+		t.Fatal(cancelled, resp.StatusCode)
+	}
 }
 func TestDownloadRejectsHTMLAndExpiredTickets(t *testing.T) {
 	a, lib, _, _ := setup(t)
@@ -238,5 +292,38 @@ func TestDownloadRejectsHTMLAndExpiredTickets(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != 401 {
 		t.Fatal(resp.StatusCode)
+	}
+}
+
+func TestDownloadTicketSurvivesCandidateCacheEviction(t *testing.T) {
+	a, lib, _, _ := setup(t)
+	lib.Add(domain.Book{ID: "1", Title: "合成测试书", Language: "zh", Formats: []string{"pdf"}})
+	ts := httptest.NewServer(a.Handler("test"))
+	defer ts.Close()
+	a.Jobs.Config.PublicURL = ts.URL
+	if _, err := a.Search(context.Background(), catalog.Input{Query: domain.Query{Query: "合成测试书"}}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := a.DownloadURL(context.Background(), "1", "pdf", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 1000; i++ {
+		book := domain.Book{Origin: "cwa", ID: fmt.Sprint(10000 + i), Title: "合成缓存记录"}
+		if err := a.Jobs.Store.PutCache("candidates", domain.ID(), book, time.Minute); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := a.Jobs.Store.KnownCWA("1"); err == nil {
+		t.Fatal("eviction did not happen")
+	}
+	resp, err := http.Get(result.(DownloadResult).URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil || resp.StatusCode != 200 || !bytes.Equal(data, lib.Output) {
+		t.Fatal("issued ticket depended on evicted cache", resp.StatusCode, err)
 	}
 }

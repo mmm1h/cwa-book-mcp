@@ -388,6 +388,7 @@ func Validate(ctx context.Context, path, format string, max int64) error {
 type Ticket struct {
 	Purpose string `json:"purpose"`
 	ID      string `json:"id"`
+	UUID    string `json:"uuid,omitempty"`
 	Format  string `json:"format,omitempty"`
 	Expires int64  `json:"expires"`
 }

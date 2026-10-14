@@ -84,6 +84,36 @@ func TestActiveDedupAndLimits(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+
+func TestExpiredTaskCleanupPreservesNewSourceDedup(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	old := testTask()
+	old.ExactKey, old.Expires = "same-source", time.Now().Add(-time.Second)
+	newer := testTask()
+	newer.ExactKey = old.ExactKey
+	result := func(t domain.Task) any { return t.ID }
+	if _, err = s.Create("old", "old", old, result); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Create("new", "new", newer, result); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Change(old.ID, func(t *domain.Task) error { t.State = "cancelled"; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	third := testTask()
+	third.ExactKey = old.ExactKey
+	raw, err := s.Create("third", "third", third, result)
+	var id string
+	json.Unmarshal(raw, &id)
+	if err != nil || id != newer.ID {
+		t.Fatal("expired task cleanup lost deduplication", id, err)
+	}
+}
 func TestCacheExpiryAndHistoryCleanup(t *testing.T) {
 	s, e := Open(t.TempDir())
 	if e != nil {

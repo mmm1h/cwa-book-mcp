@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mmm1h/cwa-book-mcp/internal/catalog"
@@ -112,7 +113,7 @@ func (a *App) DownloadURL(ctx context.Context, id, format, taskID string) (any, 
 		size = &n
 	}
 	expires := time.Now().UTC().Add(10 * time.Minute).Truncate(time.Second)
-	ticket := files.Sign(a.Jobs.Config.TicketKey, files.Ticket{Purpose: "download", ID: id, Format: format, Expires: expires.Unix()})
+	ticket := files.Sign(a.Jobs.Config.TicketKey, files.Ticket{Purpose: "download", ID: id, UUID: b.UUID, Format: format, Expires: expires.Unix()})
 	return DownloadResult{a.Jobs.Config.PublicURL + "/files/downloads/" + ticket, expires, "book-" + id + "." + format, size}, nil
 }
 func checkedReader(body io.Reader, format string) (*bufio.Reader, error) {
@@ -187,14 +188,25 @@ func (a *App) authorize(next http.Handler) http.Handler {
 type idleReader struct {
 	body       io.ReadCloser
 	controller *http.ResponseController
+	mu         sync.Mutex
+	closed     bool
 }
 
-func (r idleReader) Read(p []byte) (int, error) {
+func (r *idleReader) Read(p []byte) (int, error) {
+	r.mu.Lock()
+	if r.closed {
+		r.mu.Unlock()
+		return 0, io.ErrClosedPipe
+	}
 	_ = r.controller.SetReadDeadline(time.Now().Add(60 * time.Second))
+	r.mu.Unlock()
 	return r.body.Read(p)
 }
-func (r idleReader) Close() error {
+func (r *idleReader) Close() error {
+	r.mu.Lock()
+	r.closed = true
 	_ = r.controller.SetReadDeadline(time.Now())
+	r.mu.Unlock()
 	return r.body.Close()
 }
 func (a *App) uploadHTTP(w http.ResponseWriter, r *http.Request) {
@@ -228,11 +240,9 @@ func (a *App) uploadHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), a.Jobs.Config.TransferTimeout)
 	defer cancel()
 	controller := http.NewResponseController(w)
-	stop := context.AfterFunc(ctx, func() { _ = controller.SetReadDeadline(time.Now()); r.Body.Close() })
-	defer stop()
 	defer r.Body.Close()
 	defer controller.SetReadDeadline(time.Time{})
-	t, e := a.Jobs.Receive(ctx, id, idleReader{r.Body, controller}, r.ContentLength)
+	t, e := a.Jobs.Receive(ctx, id, &idleReader{body: r.Body, controller: controller}, r.ContentLength)
 	if e != nil {
 		writeError(w, e)
 		return
@@ -275,10 +285,13 @@ func (a *App) downloadHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer a.Jobs.Files.Done()
-	b, e := a.Jobs.Store.KnownCWA(ticket.ID)
-	if e != nil {
-		writeError(w, e)
-		return
+	b := domain.Book{ID: ticket.ID, UUID: ticket.UUID}
+	if b.UUID == "" { // Accept tickets already issued before this version.
+		b, e = a.Jobs.Store.KnownCWA(ticket.ID)
+		if e != nil {
+			writeError(w, e)
+			return
+		}
 	}
 	b, e = a.Jobs.CWA.Book(ctx, b)
 	if e != nil {
