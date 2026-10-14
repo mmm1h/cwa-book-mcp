@@ -229,7 +229,7 @@ func (c *Catalog) emit(state cursor, limit int) (Result, error) {
 		r.Candidates = append(r.Candidates, b)
 	}
 	state.Pending = state.Pending[n:]
-	if state.Tier != "" {
+	if state.Tier != "" && len(r.Candidates) > 0 {
 		t := state.Tier
 		r.Tier = &t
 	}

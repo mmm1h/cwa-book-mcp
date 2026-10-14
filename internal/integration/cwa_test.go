@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -125,8 +126,7 @@ func TestOriginalCWAUploadConvertRead(t *testing.T) {
 			if e != nil {
 				t.Fatal(e)
 			}
-			path := fm.Path(prepared.ID, "original-output.epub")
-			fm.MakeDir(prepared.ID)
+			path := filepath.Join(t.TempDir(),"original-output.epub")
 			f, e := os.Create(path)
 			if e != nil {
 				t.Fatal(e)

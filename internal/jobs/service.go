@@ -99,7 +99,7 @@ type UploadResult struct {
 }
 
 func (s *Service) uploadResult(t domain.Task) any {
-	exp := minTime(time.Now().UTC().Add(15*time.Minute), t.Expires)
+	exp := minTime(time.Now().UTC().Add(15*time.Minute), t.Expires).Truncate(time.Second)
 	ticket := files.Sign(s.Config.TicketKey, files.Ticket{Purpose: "upload", ID: t.ID, Expires: exp.Unix()})
 	return UploadResult{TaskResult: taskResult(t).(TaskResult), Ticket: ticket, URL: s.Config.PublicURL + "/files/uploads/" + t.ID + "?ticket=" + ticket, Method: "PUT", Headers: map[string]string{"Content-Type": "application/octet-stream", "Content-Length": fmt.Sprint(t.Size)}, Expires: exp, Size: t.Size}
 }

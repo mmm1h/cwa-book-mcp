@@ -19,6 +19,82 @@ import (
 	"github.com/mmm1h/cwa-book-mcp/internal/testfixture"
 )
 
+func TestExistingLibraryReuseAndExpiredCandidateReplay(t *testing.T) {
+	s, lib, src, _ := setup(t)
+	lib.Add(domain.Book{ID: "9", Title: "合成测试书", Language: "zh", Formats: []string{"pdf"}})
+	b := domain.Book{CandidateID: domain.ID(), Origin: "zlibrary", ID: "7", Ref: "7:synthetic-hash", Title: "合成测试书", Language: "zh", Formats: []string{"epub"}}
+	s.Store.PutCache("candidates", b.CandidateID, b, time.Minute)
+	a := AcquireInput{Action: "start", RequestID: "reusable", CandidateID: b.CandidateID}
+	out, e := s.Acquire(context.Background(), a)
+	if e != nil {
+		t.Fatal(e)
+	}
+	var created TaskResult
+	json.Unmarshal(out, &created)
+	task := runSteps(t, s, created.ID, 5)
+	if task.State != "ready" || task.VerificationBasis != "reused_existing" || lib.Uploads.Load() != 0 || src.Downloads.Load() != 0 {
+		t.Fatal(task)
+	}
+	s.Store.PutCache("candidates", b.CandidateID, b, -time.Second)
+	replay, e := s.Acquire(context.Background(), a)
+	if e != nil || !bytes.Equal(out, replay) {
+		t.Fatal(e)
+	}
+	a.RequestID = "new-request"
+	if _, e = s.Acquire(context.Background(), a); domain.AsError(e).Code != "CANDIDATE_EXPIRED" {
+		t.Fatal(e)
+	}
+}
+func TestCancellationAfterSubmissionAndExpiryRelease(t *testing.T) {
+	s, lib, _, data := setup(t)
+	r := prepare(t, s, data)
+	s.Receive(context.Background(), r.ID, bytes.NewReader(data), int64(len(data)))
+	v, _ := s.Store.Get(r.ID)
+	if e := s.step(context.Background(), v); e != nil {
+		t.Fatal(e)
+	}
+	out, e := s.Acquire(context.Background(), AcquireInput{Action: "cancel", RequestID: "after-submit", TaskID: r.ID})
+	if e != nil {
+		t.Fatal(e)
+	}
+	var canceled TaskResult
+	json.Unmarshal(out, &canceled)
+	if !canceled.MaySubmitted || len(lib.Books) != 1 {
+		t.Fatal(canceled)
+	}
+	other := prepare(t, s, data)
+	s.Store.Change(other.ID, func(t *domain.Task) error { t.Expires = time.Now().Add(-time.Second); return nil })
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { time.Sleep(20 * time.Millisecond); cancel() }()
+	if e = s.Run(ctx); e != nil {
+		t.Fatal(e)
+	}
+	v, _ = s.Store.Get(other.ID)
+	if v.State != "cancelled" || v.Error.Code != "TASK_EXPIRED" {
+		t.Fatal(v)
+	}
+}
+func TestFiniteSafeRetryAndSubmissionFlagSurvivesRetry(t *testing.T) {
+	s, _, _, data := setup(t)
+	r := prepare(t, s, data)
+	for i := 0; i < 3; i++ {
+		v, _ := s.Store.Get(r.ID)
+		s.failure(v, domain.Temporary("SOURCE_UNAVAILABLE", "synthetic temporary failure"))
+	}
+	v, _ := s.Store.Get(r.ID)
+	if v.State != "blocked" || v.Attempts != 3 {
+		t.Fatal(v)
+	}
+	s.Store.Change(v.ID, func(t *domain.Task) error { t.SubmissionAttempted = true; return nil })
+	if _, e := s.Acquire(context.Background(), AcquireInput{Action: "retry", RequestID: "retry-blocked", TaskID: v.ID}); e != nil {
+		t.Fatal(e)
+	}
+	v, _ = s.Store.Get(v.ID)
+	if v.State != "reconciling" || !v.SubmissionAttempted {
+		t.Fatal(v)
+	}
+}
+
 func setup(t *testing.T) (*Service, *testfixture.CWA, *testfixture.Zlib, []byte) {
 	t.Helper()
 	var input, output bytes.Buffer

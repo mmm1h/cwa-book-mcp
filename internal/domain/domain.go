@@ -131,7 +131,7 @@ type Query struct {
 }
 
 func (q Query) Validate() (Query, error) {
-	q.Query = strings.TrimSpace(norm.NFC.String(q.Query))
+	q.Query = Normalize(q.Query)
 	q.Author = Normalize(q.Author)
 	if q.Query == "" || len(q.Query) > 512 || len(q.Author) > 256 || len(q.Formats) > 2 || len(q.Language) > 64 {
 		return q, E("INVALID_ARGUMENT", "请提供有效书名或关键词，查询至多 512 字节")

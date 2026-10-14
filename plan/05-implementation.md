@@ -1,6 +1,6 @@
 # 分阶段实施计划
 
-本页是任务分解；阶段状态只更新 [plan/README.md](README.md)。当前仓库只完成文档初始化，以下全部属于后续 Agent 的开发工作。
+本页是任务分解；实现、验证与阶段状态只更新 [plan/README.md](README.md)。退出证据见 docs/validation.md 和资源报告。
 
 ## P0：优先消除依赖和集成风险
 

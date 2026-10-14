@@ -111,7 +111,7 @@ func (a *App) DownloadURL(ctx context.Context, id, format, taskID string) (any, 
 		n := resp.ContentLength
 		size = &n
 	}
-	expires := time.Now().UTC().Add(10 * time.Minute)
+	expires := time.Now().UTC().Add(10 * time.Minute).Truncate(time.Second)
 	ticket := files.Sign(a.Jobs.Config.TicketKey, files.Ticket{Purpose: "download", ID: id, Format: format, Expires: expires.Unix()})
 	return DownloadResult{a.Jobs.Config.PublicURL + "/files/downloads/" + ticket, expires, "book-" + id + "." + format, size}, nil
 }
