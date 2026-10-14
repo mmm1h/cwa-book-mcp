@@ -38,6 +38,11 @@ type cursor struct {
 	Partial      bool         `json:"partial"`
 	Warnings     []string     `json:"warnings"`
 	Searched     []string     `json:"searched"`
+	Discovery    *discovery   `json:"discovery,omitempty"`
+}
+type discovery struct {
+	CWA, Source         string
+	CWADone, SourceDone bool
 }
 type scanned struct {
 	books      []domain.Book
@@ -50,8 +55,8 @@ func (c *Catalog) remember(b domain.Book) (domain.Book, error) {
 	e := c.Store.PutCache("candidates", b.CandidateID, b, 30*time.Minute)
 	return b, e
 }
-func (c *Catalog) scan(ctx context.Context, p Searcher, q domain.Query, stop func(domain.Book) bool) (scanned, error) {
-	out := scanned{}
+func (c *Catalog) scan(ctx context.Context, p Searcher, q domain.Query, next string, stop func(domain.Book) bool) (scanned, error) {
+	out := scanned{next: next}
 	for i := 0; i < 3; i++ {
 		page, e := p.Search(ctx, q, out.next)
 		if e != nil {
@@ -114,15 +119,41 @@ func (c *Catalog) Search(ctx context.Context, in Input) (Result, error) {
 		if state.Hash != store.Hash(q) {
 			return Result{}, domain.E("CURSOR_INVALID", "游标与查询条件不符")
 		}
+		if state.Discovery != nil {
+			return c.discover(ctx, state, limit)
+		}
 		return c.continueSearch(ctx, state, limit)
 	}
+	return c.discover(ctx, state, limit)
+}
+func appendUnique(values []string, value string) []string {
+	for _, old := range values {
+		if old == value {
+			return values
+		}
+	}
+	return append(values, value)
+}
+func (c *Catalog) discover(ctx context.Context, state cursor, limit int) (Result, error) {
+	q := state.Query
+	positions := discovery{}
+	if state.Discovery != nil {
+		positions = *state.Discovery
+	}
+	state.Discovery = nil
+	state.Partial = false
+	state.Warnings = []string{}
 	preferred := q.Language == "zh_preferred"
 	stop := func(b domain.Book) bool { return !preferred || b.Language == "zh" }
-	cwa, e := c.scan(ctx, c.CWA, q, stop)
-	if e != nil {
-		return Result{}, e
+	cwa := scanned{}
+	if !positions.CWADone {
+		var e error
+		cwa, e = c.scan(ctx, c.CWA, q, positions.CWA, stop)
+		if e != nil {
+			return Result{}, e
+		}
 	}
-	state.Searched = append(state.Searched, "cwa")
+	state.Searched = appendUnique(state.Searched, "cwa")
 	cwaZH := false
 	for _, b := range cwa.books {
 		if b.Language == "zh" {
@@ -138,17 +169,21 @@ func (c *Catalog) Search(ctx context.Context, in Input) (Result, error) {
 	} else {
 		if cwa.next != "" || cwa.incomplete {
 			state.Partial = true
-			state.Warnings = append(state.Warnings, "cwa_search_incomplete")
+			state.Warnings = appendUnique(state.Warnings, "cwa_search_incomplete")
 		}
-		source, se := c.scan(ctx, c.Source, q, stop)
-		state.Searched = append(state.Searched, "zlibrary")
+		source := scanned{}
+		var se error
+		if !positions.SourceDone {
+			source, se = c.scan(ctx, c.Source, q, positions.Source, stop)
+		}
+		state.Searched = appendUnique(state.Searched, "zlibrary")
 		if se != nil {
 			state.Partial = true
-			state.Warnings = append(state.Warnings, domain.AsError(se).Code+": zlibrary_search_incomplete")
+			state.Warnings = appendUnique(state.Warnings, domain.AsError(se).Code+": zlibrary_search_incomplete")
 		}
 		if source.next != "" || source.incomplete {
 			state.Partial = true
-			state.Warnings = append(state.Warnings, "zlibrary_search_incomplete")
+			state.Warnings = appendUnique(state.Warnings, "zlibrary_search_incomplete")
 		}
 		sourceZH := false
 		for _, b := range source.books {
@@ -170,8 +205,14 @@ func (c *Catalog) Search(ctx context.Context, in Input) (Result, error) {
 			}
 			selected = source
 		default:
-			if se != nil && len(cwa.books) == 0 {
-				return Result{Candidates: []domain.Book{}, Searched: state.Searched, Partial: true, Warnings: state.Warnings}, nil
+			// A bounded scan may filter out every book before the next page.
+			// Preserve both channel positions until a tier can be selected.
+			if cwa.next != "" || source.next != "" {
+				state.Discovery = &discovery{
+					CWA: cwa.next, Source: source.next,
+					CWADone:    cwa.next == "" && !cwa.incomplete,
+					SourceDone: se == nil && source.next == "" && !source.incomplete,
+				}
 			}
 			state.Tier = ""
 			selected = scanned{}
@@ -212,7 +253,7 @@ func (c *Catalog) continueSearch(ctx context.Context, state cursor, limit int) (
 			}
 			if page.Incomplete {
 				state.Partial = true
-				state.Warnings = append(state.Warnings, "search_incomplete")
+				state.Warnings = appendUnique(state.Warnings, "search_incomplete")
 			}
 		}
 	}
@@ -235,9 +276,9 @@ func (c *Catalog) emit(state cursor, limit int) (Result, error) {
 	}
 	if state.ProviderNext != "" {
 		r.Partial = true
-		r.Warnings = append(r.Warnings, "search_incomplete")
+		r.Warnings = appendUnique(r.Warnings, "search_incomplete")
 	}
-	if len(state.Pending) > 0 || state.ProviderNext != "" {
+	if len(state.Pending) > 0 || state.ProviderNext != "" || state.Discovery != nil {
 		r.Next = domain.ID()
 		if e := c.Store.PutCache("cursors", r.Next, state, 30*time.Minute); e != nil {
 			return r, e
