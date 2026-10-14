@@ -1,18 +1,17 @@
 # 技术栈与内存预算
 
-本页是技术选型和资源数字的唯一详细定义。所有内存数字都是待验证的工程目标，不是现有测量结果。
+本页是技术选型和资源门槛的唯一详细定义。内存数字是工程目标；实际测量结果单独记录在 docs/benchmarks。
 
 ## 技术栈
 
 | 层 | 选择 | 理由与限制 |
 | --- | --- | --- |
-| 语言 | Go，最低依赖基线 1.25 | 复用书源核心，单二进制，避免解释器常驻 |
-| 编译器 | 开发时仍受支持的 Go 稳定版，精确固定 | 不把最低版本当作永久推荐版本；构建记录版本 |
-| MCP | 官方 modelcontextprotocol/go-sdk | Streamable HTTP，复用协议与 schema 支持 |
+| 语言 / 编译器 | Go 1.27.2，go.mod、Dockerfile 和 CI 精确固定 | 复用书源核心，单二进制，避免解释器常驻；升级后重新验证 |
+| MCP | 官方 modelcontextprotocol/go-sdk v1.8.0 | Streamable HTTP，复用协议与 schema 支持 |
 | HTTP | net/http、标准库 TLS、CookieJar | 不加 Gin/Fiber 等 Web 框架 |
 | 书源 | heartleo/zlib 的 Go 包 | 优先导入核心库，不启动 CLI/TUI |
 | CWA | 自写小型 HTTP adapter | 复用 OPDS 与网页上传流程，不复制 CWA 实现 |
-| 持久化 | go.etcd.io/bbolt | 单进程嵌入式 KV，无独立数据库和 CGo 依赖 |
+| 持久化 | go.etcd.io/bbolt v1.5.0 | 单进程嵌入式 KV，无独立数据库和 CGo 依赖 |
 | 编解码 | encoding/json、encoding/xml | OPDS 流式解析；HTML 表单只解析受限响应 |
 | 日志 | log/slog | 结构化、脱敏；不引入常驻遥测服务 |
 | 交付 | Linux amd64/arm64 单二进制和精简镜像 | 运行镜像保留 CA 证书，非 root 运行 |
@@ -23,7 +22,7 @@ bbolt 优于当前需求下的 SQL 层，是因为只需要任务、幂等键和
 
 ## 依赖固定与复用边界
 
-调研时可参考 go-sdk v1.8.0、bbolt v1.5.0；它们不是已经写入 go.mod 的选择。P0 核对兼容性和维护状态后固定具体版本，提交 go.sum，不在运行或构建时盲目追 latest。
+P0 已验证并固定上述版本，提交 go.mod/go.sum。书源核心固定 `6a299fdc59927f7e84f94390c4e54bfaf4d06cee`，最小补丁见 [PATCHES](../third_party/zlib/PATCHES.md)；不在运行或构建时盲目追 latest。
 
 heartleo/zlib 的调研基准见 [研究证据](../docs/research/upstream-audit.md)。其模块包含 CLI/TUI 依赖，不代表导入核心包一定链接它们；用 go list -deps 和构建结果确认，不按 go.mod 行数猜测内存。
 
@@ -109,6 +108,6 @@ GOMEMLIMIT 是 Go 运行时软限制，不能限制全部 RSS、mmap、内核缓
 5. 完成至少 100 个顺序任务并进行 30 分钟稳定性测试。
 6. 单独跑 -race 测试；性能门槛使用普通发布构建，不混用 race 开销。
 
-记录硬件、架构、Go/依赖版本、构建参数、样本大小、并发、采样方法和原始汇总数据，写入未来的 docs/benchmarks/。当前目录不放伪造的成绩表。
+记录硬件、架构、Go/依赖版本、构建参数、样本大小、并发、采样方法和原始汇总数据，写入 docs/benchmarks。实测结果与本页的目标数字分别维护。
 
 参考：[Go GC 指南](https://go.dev/doc/gc-guide)、[bbolt](https://github.com/etcd-io/bbolt)、[Go MCP SDK](https://github.com/modelcontextprotocol/go-sdk)。

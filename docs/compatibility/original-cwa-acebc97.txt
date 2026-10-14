@@ -1,0 +1,10 @@
+=== RUN   TestOriginalCWAUploadConvertRead
+=== RUN   TestOriginalCWAUploadConvertRead/epub
+    cwa_test.go:144: input=epub output=epub CWA_id=2 basis=matched_after_submission
+=== RUN   TestOriginalCWAUploadConvertRead/pdf
+    cwa_test.go:144: input=pdf output=epub CWA_id=3 basis=matched_after_submission
+--- PASS: TestOriginalCWAUploadConvertRead (22.85s)
+    --- PASS: TestOriginalCWAUploadConvertRead/epub (8.46s)
+    --- PASS: TestOriginalCWAUploadConvertRead/pdf (8.26s)
+PASS
+ok  	github.com/mmm1h/cwa-book-mcp/internal/integration	22.855s

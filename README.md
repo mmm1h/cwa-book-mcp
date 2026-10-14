@@ -2,7 +2,7 @@
 
 让多设备上的 Agent 通过 MCPHub 搜书、获取新书、上传本地书籍，并统一从 Calibre-Web Automated（CWA）取书。
 
-**应用已实现，本地受控闭环和并发检查通过。** 原版 CWA、资源与目标实例的具体状态以 [plan/README.md](plan/README.md) 为准；模拟结果不代表已部署。
+**P0–P4 开发与隔离验收已完成。** 五个工具、文件闭环、原版 CWA 集成及 Linux amd64/arm64 资源门槛均已验证；目标实例接入状态见 [plan/README.md](plan/README.md)。
 
 默认中文优先：CWA 中文 → Z-Library 中文 → CWA 其他语言 → Z-Library 其他语言。搜索与获取分开，用户选定书籍后才下载。
 

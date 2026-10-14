@@ -18,9 +18,9 @@ MCPHub 承担工具聚合，不传输书籍二进制。MCP 与文件接口位于
 
 CWA 会话可以跨业务请求复用，但保存在 CWA adapter 内，与 MCP 传输会话无关。MCP 请求尽量无会话状态，避免 MCPHub 为每个设备建立独立业务进程。
 
-## 建议模块
+## 实现模块
 
-以下是将来的代码布局，当前不创建空实现。
+以下目录已实现；合成书和 HTTP 替身在测试时生成，不保存实际书籍。
 
 ~~~text
 cmd/cwa-book-mcp/        入口、配置、生命周期
@@ -32,7 +32,13 @@ internal/jobs/          状态机、调度、恢复和有限重试
 internal/store/         bbolt、幂等键、到期索引与迁移
 internal/files/         磁盘暂存、上传票据、CWA 下载转发
 internal/config/        配置和启动校验
-testdata/               小型合成书籍和脱敏 HTTP fixture
+internal/domain/        受限模型、错误、语言和基本匹配
+internal/httpx/         有界响应、截止时间、origin 和重定向
+internal/server/        Bearer MCP 入口及授权文件 HTTP 路由
+internal/diagnostics/   显式启用的私有开发指标文件
+internal/testfixture/   原创合成书和受控 HTTP 替身
+internal/integration/   显式启用的隔离原版 CWA 验收
+tools/                  资源负载、报告门槛、测试书、许可证与打包工具
 ~~~
 
 不额外建立通用 provider 插件框架。仅对需要测试替身或隔离上游变化的边界使用接口。

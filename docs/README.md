@@ -25,22 +25,25 @@
 | 部署需要哪些输入？如何恢复？ | [运维设计](operations.md) |
 | 为什么采用这些边界？ | [决策记录](decisions.md) |
 | 上游代码到底证明了什么？ | [研究证据](research/upstream-audit.md) |
+| 哪些运行测试已经通过？ | [验证记录](validation.md) |
+| 实测资源、采样方法和原始数字？ | [资源报告](benchmarks/README.md) |
+| 可重复构建与二进制校验值？ | [开发构建](releases/development-acebc97.md) |
 
 ## 当前文件与未来目录
 
-现在存在的文档已经由上表链接。未来按实际需要增加以下内容，不先建立空文件：
+以下目录已有对应测试与构建证据；新增记录按实际需要追加，不先建立空文件：
 
 ~~~text
 docs/benchmarks/       带环境信息的真实内存报告
-docs/compatibility/    实际 CWA/MCPHub/客户端验收记录
-docs/releases/        有发布产物后的升级与迁移说明
+docs/compatibility/    隔离原版 CWA 测试输出；目标实例证据待验收
+docs/releases/        开发构建的版本、校验值与限制
 ~~~
 
 源代码目录见架构文档；部署配置和 CI 由实施阶段创建。计划中的目录名称用纯文本表示，避免链接到不存在的文件。
 
 ## 文档维护规则
 
-- 需求改 scope，资源数字改 stack-and-memory，接口改 contracts，进度改 plan/README。
+- 需求改 scope，资源门槛改 stack-and-memory，实测结果改 benchmarks，接口改 contracts，进度改 plan/README。
 - README 和 AGENTS 保持短小，只保留概述与链接，不变成全文副本。
 - 只在职责独立、值得按需读取时拆新文档，不为每个函数建一页。
 - 新证据必须注明源码、模拟、真实服务或目标实例等级。

@@ -68,3 +68,9 @@ HTTP client/context 注入修正，保留 MIT 许可证与改动清单；不使�
 
 首版只启用已验证 EAPI 和已有合法会话；遇到 challenge 返回人工验证，不执行
 上游挑战求解。未引入额外书源或 CWA 修改。见 [PATCHES](../third_party/zlib/PATCHES.md)、[运行文档](operations.md)。
+
+## D10：下载票据绑定 CWA ID 与 UUID
+
+有界候选缓存会淘汰记录，已签发的有效下载链接不能因此失效。下载票据签名同时绑定 CWA ID/UUID、格式、用途与截止时间，HTTP GET 仍读取 CWA 详情并验证记录身份，不依赖候选缓存保留，也不将缓存当作书库。已移除或替换的记录不能交付。
+
+实施：[接口契约](../plan/03-contracts.md)、internal/server；证据见 [验证记录](validation.md)。

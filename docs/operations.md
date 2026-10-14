@@ -11,13 +11,21 @@
 ```sh
 go vet ./...
 go test ./... -timeout 90s
-go test -race ./internal/store ./internal/files ./internal/jobs ./internal/catalog ./internal/server -timeout 120s
+go test -race ./internal/store ./internal/files ./internal/jobs ./internal/catalog ./internal/server ./internal/source/zlib -timeout 120s
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o dist/cwa-book-mcp-linux-amd64 ./cmd/cwa-book-mcp
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags='-s -w' -o dist/cwa-book-mcp-linux-arm64 ./cmd/cwa-book-mcp
 ```
 
 镜像只运行一个 Go 进程，无额外数据库或转换器。更新依赖后执行
 `go run ./tools/notices` 重建[第三方许可证](../third_party/licenses/README.md)，复核书源最小补丁。
+
+打包两个 Linux 架构的二进制、许可证和 SHA-256 清单：
+
+```sh
+go run ./tools/package -version dev -out dist
+```
+
+发布或私有部署时将 version 换成确认过的代码版本。tar.gz 内的主程序权限为 0755；固定 Go、源码和 version 时使用 `-trimpath -buildvcs=false` 与固定归档时间生成可重复产物。开发构建与测试证据见 [构建记录](releases/development-acebc97.md)。
 
 ## 首次配置
 
@@ -43,7 +51,7 @@ docker compose ps
 ```
 
 Compose 仅新增本项目服务：128 MiB、禁用 swap、只读根文件系统、无额外能力，挂载本服务 state/staging 和三个秘密文件。无需 CWA 书库、Docker socket 或 SSH 密钥。
-示例只向 localhost 发布端口；操作者将 MCPHub 和现有反向代理接入可达网络，确认 CWA Docker 服务名可解析。原生二进制也可运行，配置文件路径后启动。`--version` 查看版本，`--healthcheck` 只访问当前 LISTEN_ADDR 的 /healthz。
+示例只向 localhost 发布端口；操作者将 MCPHub 和现有反向代理接入可达网络，确认 CWA Docker 服务名可解析。BuildKit 自动选择宿主目标平台，支持在 amd64/arm64 主机原生构建。原生二进制也可运行，配置文件路径后启动。`--version` 查看版本，`--healthcheck` 只访问当前 LISTEN_ADDR 的 /healthz；/readyz 检查本服务状态库，不代表上游认证有效。
 
 ## 实际配置键
 
@@ -131,4 +139,22 @@ go run ./tools/bench -docker-image cwa-book-mcp:acceptance -work .work/bench-new
 go run ./tools/check-report .work/resources.json
 ```
 
-使用新的 -work 目录。报告分别记录 RSS/HWM、heap、goroutine、FD、cgroup current/peak/max/anon/file、OOM 与哈希。Windows WorkingSet/handles 不替代 Linux/容器证据；arm64 在原生 runner 实测。
+使用新的 -work 目录。报告分别记录 RSS/HWM、heap、goroutine、FD、cgroup current/peak/max/anon/file、memory.events、OOM 与哈希。Windows WorkingSet/handles 不替代 Linux/容器证据；arm64 在原生 runner 实测。
+
+负载包括停滞 PUT 取消、部分上传后强制崩溃、32 任务积压及第 33 个拒绝、两个文件许可占用时立即拒绝额外 GET、未知提交结果后重启只查库；与三档文件流使用同一个受限服务。控制突发的 BUSY 单独计数并至多重试三次，其他错误使验收失败。代码提交、内核、逻辑 CPU 数与状态库体积记录在原始 JSON；普通构建的测量不混入 race 开销。
+
+## 目标实例验收所需输入
+
+本轮完成的是仓库实现与隔离验收，尚未配置或部署现有 NAS、CWA、MCPHub。将以下输入保存在私有 `.env`、秘密文件与验收记录中，不提交仓库：
+
+| 输入 | 用途 |
+| --- | --- |
+| 目标架构、CWA 版本与内网地址 | 选择产物并只读探测 OPDS、UUID 详情与下载兼容 |
+| CWA 专用账号与权限 | 读取、下载与网页上传；密码只放服务端秘密文件 |
+| 当前转换、保留/忽略、合并与清理规则 | 填写输入/输出格式和目标格式声明；程序不调整规则 |
+| Z-Library 可信入口、合法会话与必要 CDN origin | 验证真实搜索、下载与账号阻塞，显式启用，不在公共 CI 消耗额度 |
+| MCPHub 实际版本、接入位置与 Bearer | 验证聚合后的 initialize/tools/list/tools/call |
+| PUBLIC_BASE_URL、两段完整请求上限与代理超时 | 验证 Agent PUT/GET 和 Cloudflare 大文件通路 |
+| 首个具备文件 I/O 的 Agent 及第二设备 | 验证本地上传、断线后后台继续、跨设备查任务与保存文件 |
+
+操作者确认真实环境测试授权后，先保持写入关闭完成只读探测，再用可丢弃原创测试书验收上传、转换和下载。实际部署的版本、设置、内存和外网限制须记录；隔离结果不证明生产环境已通过。

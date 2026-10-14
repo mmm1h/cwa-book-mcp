@@ -1,0 +1,10 @@
+{
+  "Version": "acebc97",
+  "GoVersion": "go1.27.2",
+  "SHA256": {
+    "cwa-book-mcp-acebc97-linux-amd64.tar.gz": "6bb8980fda2f5979b8626df49e6764cb7c3455311e84db38ba22b732d6d51c34",
+    "cwa-book-mcp-acebc97-linux-arm64.tar.gz": "26f564acd2554089061ca62499606770772d3ca57b99803f3592a2e835abb150",
+    "cwa-book-mcp-linux-amd64": "6f829bbdd9d170d684013989c4c7ebdba4923562a432c3b78651e9d71528cc4b",
+    "cwa-book-mcp-linux-arm64": "7dffc5bbe8d1affb09f3ceaadd854f0b8a2868702d20d145c34fbc675866f388"
+  }
+}
