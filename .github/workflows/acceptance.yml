@@ -71,7 +71,7 @@ jobs:
           go-version: '1.27.2'
           cache: true
       - run: go test ./... -timeout 90s
-      - run: go test -race ./internal/store ./internal/files ./internal/jobs ./internal/catalog ./internal/server -timeout 120s
+      - run: go test -race ./internal/store ./internal/files ./internal/jobs ./internal/catalog ./internal/server ./internal/source/zlib -timeout 120s
       - name: Build local non-root release image
         run: docker build --build-arg TARGETARCH=${{ matrix.arch }} --build-arg VERSION=${{ github.sha }} -t cwa-book-mcp:acceptance .
       - name: Full 128 MiB resource load

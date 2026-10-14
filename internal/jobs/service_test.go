@@ -317,3 +317,40 @@ func TestConcurrentPUTAndCancellation(t *testing.T) {
 		t.Fatal(v)
 	}
 }
+
+func TestUploadCancellationDuringStartup(t *testing.T) {
+	s, lib, _, data := setup(t)
+	for i := 0; i < 50; i++ {
+		r := prepare(t, s, data)
+		reader, writer := io.Pipe()
+		start, done := make(chan struct{}), make(chan error, 1)
+		go func() {
+			<-start
+			_, err := s.Receive(context.Background(), r.ID, reader, int64(len(data)))
+			done <- err
+		}()
+		close(start)
+		_, err := s.Acquire(context.Background(), AcquireInput{Action: "cancel", RequestID: domain.ID(), TaskID: r.ID})
+		if err != nil {
+			writer.Close()
+			t.Fatal(err)
+		}
+		select {
+		case err = <-done:
+			if err == nil {
+				t.Fatal("cancelled upload succeeded")
+			}
+		case <-time.After(time.Second):
+			writer.Close()
+			t.Fatal("cancellation missed the starting upload")
+		}
+		writer.Close()
+		task, _ := s.Store.Get(r.ID)
+		if task.State != "cancelled" {
+			t.Fatal(task)
+		}
+	}
+	if lib.Uploads.Load() != 0 {
+		t.Fatal("cancelled upload reached CWA")
+	}
+}

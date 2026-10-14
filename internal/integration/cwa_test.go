@@ -126,7 +126,7 @@ func TestOriginalCWAUploadConvertRead(t *testing.T) {
 			if e != nil {
 				t.Fatal(e)
 			}
-			path := filepath.Join(t.TempDir(),"original-output.epub")
+			path := filepath.Join(t.TempDir(), "original-output.epub")
 			f, e := os.Create(path)
 			if e != nil {
 				t.Fatal(e)

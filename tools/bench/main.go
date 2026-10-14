@@ -3,10 +3,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -52,6 +54,7 @@ type report struct {
 	Started, Finished                            time.Time
 	IdleSeconds, StableSeconds                   float64
 	HistoryTasks, SequentialTasks                int
+	BackpressureResponses                        int
 	Phases                                       []phaseResult
 	Samples                                      []sample
 	OOMKilled                                    bool
@@ -60,10 +63,28 @@ type report struct {
 }
 type auth struct{ token string }
 
+var errBusy = errors.New("bounded control backpressure")
+
 func (a auth) RoundTrip(r *http.Request) (*http.Response, error) {
 	r = r.Clone(r.Context())
 	r.Header.Set("Authorization", "Bearer "+a.token)
-	return http.DefaultTransport.RoundTrip(r)
+	resp, err := http.DefaultTransport.RoundTrip(r)
+	if err != nil || resp.StatusCode != http.StatusServiceUnavailable {
+		return resp, err
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 4097))
+	resp.Body.Close()
+	if err != nil {
+		return nil, err
+	}
+	var result struct {
+		Error domain.Error `json:"error"`
+	}
+	if len(data) <= 4096 && json.Unmarshal(data, &result) == nil && result.Error.Code == "BUSY" {
+		return nil, errBusy
+	}
+	resp.Body = io.NopCloser(bytes.NewReader(data))
+	return resp, nil
 }
 
 type bench struct {
@@ -115,7 +136,7 @@ func run() error {
 		return e
 	}
 	b := &bench{work: abs, metrics: filepath.Join(abs, "metrics.json"), phase: "startup", wait: make(chan error, 1)}
-	b.report = report{OS: runtime.GOOS, Arch: runtime.GOARCH, GoVersion: runtime.Version(), Service: *binary, ContainerImage: *image, Started: time.Now().UTC(), HistoryTasks: *history, SequentialTasks: *sequential, Gates: map[string]bool{}, Limitations: []string{}}
+	b.report = report{OS: runtime.GOOS, Arch: runtime.GOARCH, GoVersion: runtime.Version(), Service: *binary, ContainerImage: *image, Started: time.Now().UTC(), HistoryTasks: *history, Gates: map[string]bool{}, Limitations: []string{}}
 	defer func() {
 		b.report.Finished = time.Now().UTC()
 		b.mu.Lock()
@@ -157,6 +178,7 @@ func run() error {
 		if e = b.one(ctx, false); e != nil {
 			return e
 		}
+		b.report.SequentialTasks++
 		if (i+1)%20 == 0 {
 			fmt.Println("completed jobs", i+1)
 		}
@@ -364,7 +386,23 @@ func (b *bench) sample(ctx context.Context) {
 	}
 }
 func (b *bench) call(ctx context.Context, name string, args any, out any) error {
-	r, e := b.sess.CallTool(ctx, &sdk.CallToolParams{Name: name, Arguments: args})
+	var r *sdk.CallToolResult
+	var e error
+	for attempt := 0; ; attempt++ {
+		r, e = b.sess.CallTool(ctx, &sdk.CallToolParams{Name: name, Arguments: args})
+		if !errors.Is(e, errBusy) {
+			break
+		}
+		b.mu.Lock()
+		b.report.BackpressureResponses++
+		b.mu.Unlock()
+		if attempt == 3 {
+			return e
+		}
+		if e = waitContext(ctx, time.Duration(1<<attempt)*100*time.Millisecond); e != nil {
+			return e
+		}
+	}
 	if e != nil {
 		return e
 	}
@@ -446,7 +484,9 @@ func (b *bench) one(ctx context.Context, concurrent bool) error {
 		}()
 	}
 	wg.Wait()
-	_ = burstErr // BUSY is expected during bounded control bursts.
+	if burstErr != nil {
+		return burstErr
+	}
 	deadline := time.Now().Add(5 * time.Minute)
 	var final domain.Task
 	for {

@@ -338,6 +338,11 @@ func (s *Service) cleanupIfIdle(id string) {
 	}
 }
 func (s *Service) beginTransfer(ctx context.Context, id string) (context.Context, func(), error) {
+	// Cancellation commits the terminal state before taking mu. Keep the local
+	// state read and registration under this lock so cancellation cannot miss a
+	// transfer registered after stopTransfer has already returned.
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	t, e := s.Store.Get(id)
 	if e != nil {
 		return nil, nil, e
@@ -349,14 +354,11 @@ func (s *Service) beginTransfer(ctx context.Context, id string) (context.Context
 	if remaining <= 0 {
 		return nil, nil, domain.E("TASK_EXPIRED", "任务已到期")
 	}
-	s.mu.Lock()
 	if s.transfers[id] != nil {
-		s.mu.Unlock()
 		return nil, nil, domain.E("UPLOAD_IN_PROGRESS", "同一任务已有文件传输")
 	}
 	ctx, cancel := context.WithTimeout(ctx, min(s.Config.TransferTimeout, remaining))
 	s.transfers[id] = cancel
-	s.mu.Unlock()
 	return ctx, func() {
 		cancel()
 		s.mu.Lock()
@@ -576,12 +578,12 @@ func (s *Service) Run(ctx context.Context) error {
 		for i := range tasks {
 			t := &tasks[i]
 			if now.After(t.Expires) {
-				s.stopTransfer(t.ID)
 				_, _ = s.change(t.ID, func(t *domain.Task) error {
 					t.State = "cancelled"
 					t.Error = domain.E("TASK_EXPIRED", "任务已到期")
 					return nil
 				})
+				s.stopTransfer(t.ID)
 				s.cleanupIfIdle(t.ID)
 				continue
 			}
