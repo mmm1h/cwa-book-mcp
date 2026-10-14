@@ -181,6 +181,12 @@ func (a *App) authorize(next http.Handler) http.Handler {
 		r.Body = http.MaxBytesReader(w, r.Body, 256<<10)
 		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 		defer cancel()
+		controller := http.NewResponseController(w)
+		deadline, _ := ctx.Deadline()
+		_ = controller.SetReadDeadline(deadline)
+		_ = controller.SetWriteDeadline(deadline)
+		defer controller.SetWriteDeadline(time.Time{})
+		defer controller.SetReadDeadline(time.Time{})
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -240,8 +246,8 @@ func (a *App) uploadHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), a.Jobs.Config.TransferTimeout)
 	defer cancel()
 	controller := http.NewResponseController(w)
-	defer r.Body.Close()
 	defer controller.SetReadDeadline(time.Time{})
+	defer func() { _ = controller.SetReadDeadline(time.Now()); _ = r.Body.Close() }()
 	t, e := a.Jobs.Receive(ctx, id, &idleReader{body: r.Body, controller: controller}, r.ContentLength)
 	if e != nil {
 		writeError(w, e)
@@ -254,12 +260,20 @@ func (a *App) uploadHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 type idleWriter struct {
-	w http.ResponseWriter
-	c *http.ResponseController
+	w   http.ResponseWriter
+	c   *http.ResponseController
+	ctx context.Context
 }
 
 func (w idleWriter) Write(p []byte) (int, error) {
-	_ = w.c.SetWriteDeadline(time.Now().Add(60 * time.Second))
+	if err := w.ctx.Err(); err != nil {
+		return 0, err
+	}
+	deadline := time.Now().Add(60 * time.Second)
+	if limit, ok := w.ctx.Deadline(); ok && limit.Before(deadline) {
+		deadline = limit
+	}
+	_ = w.c.SetWriteDeadline(deadline)
 	return w.w.Write(p)
 }
 func (a *App) downloadHTTP(w http.ResponseWriter, r *http.Request) {
@@ -280,7 +294,7 @@ func (a *App) downloadHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), a.Jobs.Config.TransferTimeout)
 	defer cancel()
-	if e = a.Jobs.Files.Acquire(ctx); e != nil {
+	if e = a.Jobs.Files.TryAcquire(); e != nil {
 		writeError(w, e)
 		return
 	}
@@ -322,7 +336,7 @@ func (a *App) downloadHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	c := http.NewResponseController(w)
 	defer c.SetWriteDeadline(time.Time{})
-	n, _, e := a.Jobs.Files.Copy(ctx, idleWriter{w, c}, reader, a.Jobs.Config.MaxFile, nil)
+	n, _, e := a.Jobs.Files.Copy(ctx, idleWriter{w, c, ctx}, reader, a.Jobs.Config.MaxFile, nil)
 	if e != nil || resp.ContentLength >= 0 && n != resp.ContentLength {
 		panic(http.ErrAbortHandler)
 	}

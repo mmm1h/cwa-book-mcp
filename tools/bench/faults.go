@@ -16,6 +16,7 @@ import (
 	"github.com/mmm1h/cwa-book-mcp/internal/catalog"
 	"github.com/mmm1h/cwa-book-mcp/internal/domain"
 	"github.com/mmm1h/cwa-book-mcp/internal/jobs"
+	"github.com/mmm1h/cwa-book-mcp/internal/server"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -115,6 +116,9 @@ func (b *bench) faults(ctx context.Context) error {
 		}
 		b.report.FaultChecks[key] = true
 	}
+	if err := b.fileBackpressure(ctx); err != nil {
+		return err
+	}
 
 	ids := []string{}
 	for i := 0; i < 32; i++ {
@@ -177,6 +181,83 @@ func (b *bench) faults(ctx context.Context) error {
 		return fmt.Errorf("uncertain submission was repeated after restart")
 	}
 	b.report.FaultChecks["unknown_submission_restart_no_reupload"] = true
+	return nil
+}
+
+func (b *bench) fileBackpressure(ctx context.Context) error {
+	var catalogResult catalog.Result
+	if err := b.call(ctx, "search_books", map[string]any{"query": "客户端下载"}, &catalogResult); err != nil {
+		return err
+	}
+	var link server.DownloadResult
+	if err := b.call(ctx, "get_download_url", map[string]any{"cwa_book_id": "1", "format": "pdf"}, &link); err != nil {
+		return err
+	}
+	type pending struct {
+		id     string
+		cancel context.CancelFunc
+		writer *io.PipeWriter
+		done   chan error
+	}
+	transfers := []pending{}
+	defer func() {
+		for _, transfer := range transfers {
+			transfer.cancel()
+			transfer.writer.Close()
+			<-transfer.done
+		}
+	}()
+	for i := 0; i < 2; i++ {
+		upload, err := b.prepare(ctx, 256<<10)
+		if err != nil {
+			return err
+		}
+		transfer, cancel := context.WithTimeout(ctx, 20*time.Second)
+		reader, writer := io.Pipe()
+		req, _ := http.NewRequestWithContext(transfer, "PUT", upload.URL, reader)
+		req.ContentLength = upload.Size
+		req.Header.Set("Content-Type", "application/octet-stream")
+		done := make(chan error, 1)
+		go func() {
+			resp, err := http.DefaultClient.Do(req)
+			if resp != nil {
+				resp.Body.Close()
+			}
+			done <- err
+		}()
+		transfers = append(transfers, pending{upload.ID, cancel, writer, done})
+		if _, err = writer.Write(make([]byte, 4096)); err != nil {
+			return err
+		}
+		if _, err = b.waitTask(ctx, upload.ID, func(t domain.Task) bool { return t.Received > 0 }); err != nil {
+			return err
+		}
+	}
+	for i := 0; i < 20; i++ {
+		bounded, cancel := context.WithTimeout(ctx, time.Second)
+		req, _ := http.NewRequestWithContext(bounded, "GET", link.URL, nil)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			cancel()
+			return fmt.Errorf("file request queued without backpressure: %w", err)
+		}
+		var body struct {
+			Error domain.Error `json:"error"`
+		}
+		err = json.NewDecoder(resp.Body).Decode(&body)
+		resp.Body.Close()
+		cancel()
+		if err != nil || resp.StatusCode != 503 || body.Error.Code != "BUSY" {
+			return fmt.Errorf("third file permit was not rejected: status=%d %v", resp.StatusCode, err)
+		}
+	}
+	b.capture()
+	for _, transfer := range transfers {
+		if err := b.cancelTask(ctx, transfer.id); err != nil {
+			return err
+		}
+	}
+	b.report.FaultChecks["file_backpressure_bounded"] = true
 	return nil
 }
 

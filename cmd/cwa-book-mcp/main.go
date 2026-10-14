@@ -81,7 +81,7 @@ func run() error {
 		return e
 	}
 	app := server.New(service)
-	httpServer := &http.Server{Addr: c.Listen, Handler: app.Handler(version), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
+	httpServer := &http.Server{Addr: c.Listen, Handler: app.Handler(version), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 60 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	worker := make(chan error, 1)
 	go func() { worker <- service.Run(ctx) }()
 	serving := make(chan error, 1)

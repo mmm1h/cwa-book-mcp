@@ -665,7 +665,7 @@ func (b *bench) evaluate() {
 	b.report.Gates["file_size_rss_delta_16_mib"] = small > 0 && large > 0 && (large <= small || large-small <= 16<<20)
 	b.report.Gates["100_sequential_jobs"] = b.report.SequentialTasks >= 100
 	b.report.Gates["1000_history_tasks"] = b.report.HistoryTasks == 1000
-	b.report.Gates["lifecycle_faults"] = len(b.report.FaultChecks) == 4
+	b.report.Gates["lifecycle_faults"] = len(b.report.FaultChecks) == 5
 	for _, pass := range b.report.FaultChecks {
 		b.report.Gates["lifecycle_faults"] = b.report.Gates["lifecycle_faults"] && pass
 	}

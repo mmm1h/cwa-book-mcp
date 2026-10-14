@@ -79,7 +79,15 @@ func (m *Manager) Acquire(ctx context.Context) error {
 		return ctx.Err()
 	}
 }
-func (m *Manager) Done()                       { <-m.permits }
+func (m *Manager) Done() { <-m.permits }
+func (m *Manager) TryAcquire() error {
+	select {
+	case m.permits <- struct{}{}:
+		return nil
+	default:
+		return domain.Temporary("BUSY", "文件传输并发已达上限，请稍后完整重试")
+	}
+}
 func (m *Manager) Path(id, name string) string { return filepath.Join(m.root, id, name) }
 func (m *Manager) MakeDir(id string) error {
 	if e := domain.CheckID(id); e != nil {

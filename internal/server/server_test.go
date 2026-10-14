@@ -327,3 +327,70 @@ func TestDownloadTicketSurvivesCandidateCacheEviction(t *testing.T) {
 		t.Fatal("issued ticket depended on evicted cache", resp.StatusCode, err)
 	}
 }
+
+func TestFileDownloadBackpressureRejectsWithoutWaiting(t *testing.T) {
+	a, lib, _, _ := setup(t)
+	lib.Add(domain.Book{ID: "1", Title: "合成测试书", Language: "zh", Formats: []string{"pdf"}})
+	ts := httptest.NewServer(a.Handler("test"))
+	defer ts.Close()
+	a.Jobs.Config.PublicURL = ts.URL
+	if _, err := a.Search(context.Background(), catalog.Input{Query: domain.Query{Query: "合成测试书"}}); err != nil {
+		t.Fatal(err)
+	}
+	link, err := a.DownloadURL(context.Background(), "1", "pdf", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.Jobs.Files.Acquire(context.Background())
+	a.Jobs.Files.Acquire(context.Background())
+	defer a.Jobs.Files.Done()
+	defer a.Jobs.Files.Done()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, "GET", link.(DownloadResult).URL, nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal("file request queued behind occupied permits", err)
+	}
+	defer resp.Body.Close()
+	var body struct {
+		Error domain.Error `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 503 || body.Error.Code != "BUSY" || !body.Error.Retryable || resp.Header.Get("Retry-After") == "" {
+		t.Fatal(resp.StatusCode, body)
+	}
+}
+
+func TestCompleteUploadReplayDoesNotDrainStalledBody(t *testing.T) {
+	a, _, _, data := setup(t)
+	ts := httptest.NewServer(a.Handler("test"))
+	defer ts.Close()
+	a.Jobs.Config.PublicURL = ts.URL
+	raw, err := a.Jobs.Upload(jobs.UploadInput{Action: "prepare", RequestID: "replay-stall", Title: "合成测试书", Filename: "synthetic.epub", Size: int64(len(data))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var upload jobs.UploadResult
+	json.Unmarshal(raw, &upload)
+	if _, err = a.Jobs.Receive(context.Background(), upload.ID, bytes.NewReader(data), int64(len(data))); err != nil {
+		t.Fatal(err)
+	}
+	conn, err := net.Dial("tcp", strings.TrimPrefix(ts.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	fmt.Fprintf(conn, "PUT %s HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/octet-stream\r\nContent-Length: %d\r\n\r\n", strings.TrimPrefix(upload.URL, ts.URL), len(data))
+	conn.SetReadDeadline(time.Now().Add(time.Second))
+	resp, err := http.ReadResponse(bufio.NewReader(conn), &http.Request{Method: "PUT"})
+	if err != nil {
+		t.Fatal("idempotent PUT waited for an unused body", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 202 {
+		t.Fatal(resp.StatusCode)
+	}
+}
