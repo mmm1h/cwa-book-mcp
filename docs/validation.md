@@ -34,3 +34,24 @@ Linux RSS/cgroup 验收、arm64 实测、目标 NAS/MCPHub/Agent 与书源真实
 默认一个 worker、两个文件许可、八个控制许可；等待核对只保存轮询时间。
 
 代码、HTTP 替身测试与直接 SDK 客户端测试已落地；真实环境边界见前文。
+
+## P2 搜索与读取
+
+`internal/catalog` 的八项优先级矩阵、CWA 故障不回退、绑定条件的分页游标均
+通过。`internal/cwa` 真实模板形状的 75 条 feed 分两页返回，第二页从 51 开始；
+UUID 详情核验、Basic 鉴权、HTML 登录页识别通过。书源仅启用 EAPI，搜索数组
+解码时上限 50，来源 URL/凭据不会出现在 MCP 结果中。
+
+`internal/server` 通过五工具直连调用、短期 CWA 链接、实际 GET 哈希一致、Range
+拒绝、票据篡改/到期、HTML 冒充文件拒绝。原版 CWA 测试另行记录。
+
+## P3 受控闭环与恢复
+
+`internal/jobs` 通过本地上传与书源获取到 CWA 替身的闭环；输入 EPUB、目标 PDF
+字节不同，仍按输出格式完整校验后 ready。HTTP 200 未入库不会 ready；未知
+提交重启后只核对，上传计数保持一次；多个候选进入 needs_review，resolve 后
+保留 user_resolved；原子文件已发布而 queued 未落库时可恢复。
+
+`go test -race ./internal/store ./internal/files ./internal/jobs ./internal/catalog
+./internal/server -timeout 120s` 在 Windows amd64 / LLVM MinGW 20261006 下通过。
+Linux/arm64 race 及原版 CWA 通过隔离 acceptance workflow 执行，结果待补。

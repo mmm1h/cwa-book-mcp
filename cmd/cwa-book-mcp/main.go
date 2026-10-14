@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/mmm1h/cwa-book-mcp/internal/config"
 	"github.com/mmm1h/cwa-book-mcp/internal/cwa"
+	"github.com/mmm1h/cwa-book-mcp/internal/diagnostics"
 	"github.com/mmm1h/cwa-book-mcp/internal/files"
 	"github.com/mmm1h/cwa-book-mcp/internal/jobs"
 	"github.com/mmm1h/cwa-book-mcp/internal/server"
@@ -22,6 +24,26 @@ import (
 var version = "dev"
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--healthcheck" {
+		address := os.Getenv("LISTEN_ADDR")
+		if address == "" {
+			address = ":8080"
+		}
+		_, port, e := net.SplitHostPort(address)
+		if e != nil {
+			os.Exit(1)
+		}
+		client := http.Client{Timeout: 4 * time.Second}
+		response, e := client.Get("http://127.0.0.1:" + port + "/healthz")
+		if e != nil {
+			os.Exit(1)
+		}
+		response.Body.Close()
+		if response.StatusCode != 200 {
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) == 2 && os.Args[1] == "--version" {
 		fmt.Println(version)
 		return
@@ -52,6 +74,9 @@ func run() error {
 	service := jobs.New(c, db, f, lib, source)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if path := os.Getenv("CWA_DEBUG_METRICS_FILE"); path != "" {
+		go diagnostics.Monitor(ctx, path)
+	}
 	if e = service.Recover(ctx); e != nil {
 		return e
 	}

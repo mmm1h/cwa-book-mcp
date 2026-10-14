@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"unicode/utf16"
 )
 
 func EPUB(w io.Writer) error {
@@ -38,19 +39,28 @@ func (repeatReader) Read(p []byte) (int, error) {
 // PDF writes an original valid single-page PDF with a synthetic comment padded
 // to exactly size bytes. It uses a fixed buffer for even 1 GiB samples.
 func PDF(w io.Writer, size int64) error {
+	return PDFTitle(w, size, "合成测试书")
+}
+func PDFTitle(w io.Writer, size int64, title string) error {
+	var titleHex strings.Builder
+	titleHex.WriteString("FEFF")
+	for _, r := range utf16.Encode([]rune(title)) {
+		fmt.Fprintf(&titleHex, "%04X", r)
+	}
 	var small strings.Builder
 	small.WriteString("%PDF-1.4\n")
 	offsets := []int{0}
-	for i, obj := range []string{"<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>", "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R >>", "<< /Length 0 >>\nstream\n\nendstream"} {
+	content := "BT /F1 12 Tf 20 100 Td (Original synthetic CWA test content) Tj ET\n"
+	for i, obj := range []string{"<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>", "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>", fmt.Sprintf("<< /Length %d >>\nstream\n%sendstream", len(content), content), "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>", "<< /Title <" + titleHex.String() + "> /Author (Test Author) >>"} {
 		offsets = append(offsets, small.Len())
 		fmt.Fprintf(&small, "%d 0 obj\n%s\nendobj\n", i+1, obj)
 	}
 	start := small.Len()
-	fmt.Fprintf(&small, "xref\n0 5\n0000000000 65535 f \n")
+	fmt.Fprintf(&small, "xref\n0 7\n0000000000 65535 f \n")
 	for _, off := range offsets[1:] {
 		fmt.Fprintf(&small, "%010d 00000 n \n", off)
 	}
-	fmt.Fprintf(&small, "trailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n%d\n", start)
+	fmt.Fprintf(&small, "trailer\n<< /Size 7 /Root 1 0 R /Info 6 0 R >>\nstartxref\n%d\n", start)
 	prefix := small.String()
 	padding := size - int64(len(prefix)) - 8
 	if padding < 0 {

@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "cwa-books": {
+      "type": "streamable-http",
+      "url": "http://cwa-book-mcp:8080/mcp",
+      "headers": {
+        "Authorization": "Bearer <MCP_SERVICE_TOKEN>"
+      },
+      "perSessionClient": false,
+      "enabled": true
+    }
+  }
+}

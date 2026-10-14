@@ -27,9 +27,9 @@
 | 开发前文档复核 | 完成 | 单文件协议、匹配信息、恢复/清理、格式门槛与验收已对齐；见 [决策 D08](../docs/decisions.md) |
 | P0：依赖与集成风险验证 | 本地完成；原版 CWA 待测 | [验证记录](../docs/validation.md)、[书源补丁](../third_party/zlib/PATCHES.md) |
 | P1：Go 服务、存储和 MCP 基础 | 完成 | [验证记录 P1](../docs/validation.md)、internal/store、internal/server 测试 |
-| P2：CWA 读取与中文优先搜索 | 未开始 | 待补 |
-| P3：服务端获取、本地上传、入库核对 | 未开始 | 待补 |
-| P4：资源验收、打包与操作文档 | 未开始 | 待补 |
+| P2：CWA 读取与中文优先搜索 | 本地完成 | [验证记录 P2](../docs/validation.md)、internal/catalog 与 internal/server 测试 |
+| P3：服务端获取、本地上传、入库核对 | 受控测试完成；原版 CWA 测试进行中 | [验证记录 P3](../docs/validation.md)、internal/jobs 测试 |
+| P4：资源验收、打包与操作文档 | 进行中 | tools/bench、Dockerfile、隔离 acceptance workflow |
 | P5：目标实例端到端验收 | 未开始 | 待补 |
 
 ## 已确定与待测

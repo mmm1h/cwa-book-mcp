@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,6 +22,8 @@ type CWA struct {
 	Mu                                     sync.Mutex
 	Books                                  []domain.Book
 	Output                                 []byte
+	OutputPath                             string
+	OutputBytes                            int64
 	InputTitle, InputLanguage, InputFormat string
 	Behavior                               string
 	Uploads                                atomic.Int64
@@ -159,7 +162,11 @@ func (f *CWA) serve(w http.ResponseWriter, r *http.Request) {
 			}
 			fmt.Fprintf(w, "<dcterms:language>%s</dcterms:language>", XML(b.Language))
 			for _, format := range b.Formats {
-				fmt.Fprintf(w, `<link rel="http://opds-spec.org/acquisition" href="/opds/download/%s/%s/" type="%s" length="%d"/>`, b.ID, format, domain.ContentType(format), len(f.Output))
+				size := int64(len(f.Output))
+				if f.OutputPath != "" {
+					size = f.OutputBytes
+				}
+				fmt.Fprintf(w, `<link rel="http://opds-spec.org/acquisition" href="/opds/download/%s/%s/" type="%s" length="%d"/>`, b.ID, format, domain.ContentType(format), size)
 			}
 			io.WriteString(w, "</entry>")
 		}
@@ -193,6 +200,17 @@ func (f *CWA) serve(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				w.Header().Set("Content-Type", domain.ContentType(parts[3]))
+				if f.OutputPath != "" {
+					w.Header().Set("Content-Length", strconv.FormatInt(f.OutputBytes, 10))
+					file, e := os.Open(f.OutputPath)
+					if e != nil {
+						w.WriteHeader(500)
+						return
+					}
+					defer file.Close()
+					_, _ = io.CopyBuffer(w, file, make([]byte, 64<<10))
+					return
+				}
 				w.Header().Set("Content-Length", strconv.Itoa(len(f.Output)))
 				w.Write(f.Output)
 				return
@@ -208,6 +226,8 @@ type Zlib struct {
 	Server    *httptest.Server
 	Book      domain.Book
 	Data      []byte
+	DataPath  string
+	DataBytes int64
 	Searches  atomic.Int64
 	Downloads atomic.Int64
 }
@@ -216,7 +236,11 @@ func NewZlib(b domain.Book, data []byte) *Zlib {
 	f := &Zlib{Book: b, Data: data}
 	f.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		raw := map[string]any{"id": "7", "hash": "synthetic-hash", "title": b.Title, "language": b.Language, "extension": b.Formats[0], "filesize": len(data)}
+		size := int64(len(data))
+		if f.DataPath != "" {
+			size = f.DataBytes
+		}
+		raw := map[string]any{"id": "7", "hash": "synthetic-hash", "title": b.Title, "language": b.Language, "extension": b.Formats[0], "filesize": size}
 		switch r.URL.Path {
 		case "/eapi/book/search":
 			f.Searches.Add(1)
@@ -229,6 +253,17 @@ func NewZlib(b domain.Book, data []byte) *Zlib {
 			f.Downloads.Add(1)
 			w.Header().Set("Content-Type", domain.ContentType(b.Formats[0]))
 			w.Header().Set("Content-Disposition", "attachment; filename=synthetic."+b.Formats[0])
+			if f.DataPath != "" {
+				w.Header().Set("Content-Length", strconv.FormatInt(f.DataBytes, 10))
+				file, e := os.Open(f.DataPath)
+				if e != nil {
+					w.WriteHeader(500)
+					return
+				}
+				defer file.Close()
+				_, _ = io.CopyBuffer(w, file, make([]byte, 64<<10))
+				return
+			}
 			w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 			w.Write(data)
 		default:
