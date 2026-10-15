@@ -76,7 +76,7 @@ EOF、SIGINT、SIGTERM 会关闭本进程。重启后核对已提交任务、恢
 
 `npm run check` → `npm run test:package` → `npm pack`。包包含 dist、用户文档、许可证和 npm-shrinkwrap.json，不含源码、测试文件、凭据或 Go 产物。改依赖后运行 `node scripts/notices.mjs` 更新许可证。
 
-当前未发布。首次交互发布使用已验证邮箱、已启用 2FA 的账号执行 `npm login`；默认浏览器授权，终端密码登录也可能要求一次性验证。包名 cwa-book-mcp 尚未预留；冲突时改为维护者 scope，并同步示例。先发布 next 通道并从公共 registry 验证，再推广稳定版本。若同一 0.1.0 已发布到 next，使用 `npm dist-tag add cwa-book-mcp@0.1.0 latest` 推广，不能覆盖同版本包。
+首次交互发布使用已验证邮箱、已启用 2FA 的账号执行 `npm login`；默认浏览器授权，终端密码登录也可能要求一次性验证。首次发布前核对包名 cwa-book-mcp 是否可用；冲突时改为维护者 scope，并同步示例。先发布 next 通道并从公共 registry 验证，再推广稳定版本。若同一 0.1.0 已发布到 next，使用 `npm dist-tag add cwa-book-mcp@0.1.0 latest` 推广，不能覆盖同版本包。
 
 首次发布后在 npm 为本仓库的 publish.yml 配置 GitHub Actions trusted publisher，并建立 npm environment。后续手动工作流使用 OIDC/provenance，发布前要求当前提交的完整 acceptance 工作流成功，不保存长期 npm 令牌。发布后以 `PUBLISHED_PACKAGE_SPEC=cwa-book-mcp@0.1.0` 运行 `npm run test:package`，核对公共包 integrity 与本地产物一致，再验证空缓存安装、五工具发现/调用及重启。真实书源和目标部署的剩余验收仍须按 [validation](validation.md) 完成。
 
