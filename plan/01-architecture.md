@@ -5,7 +5,7 @@
 ~~~mermaid
 flowchart LR
     A["设备上的 Agent"] -->|"MCP 工具"| H["MCPHub"]
-    H -->|"Streamable HTTP /mcp"| M["cwa-book-mcp：一个 Go 进程"]
+    H -->|"stdio command/args/env；可选 HTTP /mcp"| M["cwa-book-mcp：一个 Go 进程"]
     A <-->|"临时授权文件接口"| M
     M -->|"搜索、详情、下载"| Z["Z-Library"]
     M <-->|"OPDS / 网页上传 / 下载"| C["原版 CWA"]
@@ -14,9 +14,9 @@ flowchart LR
     C --> L["唯一持久书库"]
 ~~~
 
-MCPHub 承担工具聚合，不传输书籍二进制。MCP 与文件接口位于同一监听服务；后台任务不依赖某个 MCP 会话存活。
+MCPHub 承担工具聚合，不传输书籍二进制。推荐 MCPHub 启动一个共享 stdio 子进程，该进程同时提供授权文件 HTTP 接口；可选 HTTP 模式将 MCP 与文件接口放在同一监听服务。后台任务不依赖设备侧 MCP 会话存活。
 
-CWA 会话可以跨业务请求复用，但保存在 CWA adapter 内，与 MCP 传输会话无关。MCP 请求尽量无会话状态，避免 MCPHub 为每个设备建立独立业务进程。
+CWA 会话可以跨业务请求复用，但保存在 CWA adapter 内，与 MCP 传输会话无关。MCPHub 配置 perSessionClient=false，避免每个设备另起进程并争抢同一状态库。stdio 的 stdin EOF 或 MCPHub 停止进程时关闭文件接口与 worker；任务持久化保留，下次启动恢复。
 
 ## 实现模块
 
@@ -34,7 +34,7 @@ internal/files/         磁盘暂存、上传票据、CWA 下载转发
 internal/config/        配置和启动校验
 internal/domain/        受限模型、错误、语言和基本匹配
 internal/httpx/         有界响应、截止时间、origin 和重定向
-internal/server/        Bearer MCP 入口及授权文件 HTTP 路由
+internal/server/        可选 Bearer MCP 入口及授权文件 HTTP 路由
 internal/diagnostics/   显式启用的私有开发指标文件
 internal/testfixture/   原创合成书和受控 HTTP 替身
 internal/integration/   显式启用的隔离原版 CWA 验收

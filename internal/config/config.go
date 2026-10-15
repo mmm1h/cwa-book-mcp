@@ -1,9 +1,13 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -12,6 +16,7 @@ import (
 )
 
 type Config struct {
+	Transport                                      string
 	Listen, PublicURL, StateDir, StagingDir        string
 	MCPToken, TicketKey                            []byte
 	CWABase, CWAUsername, CWAPassword, CWAExpected string
@@ -41,23 +46,69 @@ func integer(k string, d int64) (int64, error) {
 	return n, nil
 }
 func secret(k string, min int) ([]byte, error) {
+	valueKey := strings.TrimSuffix(k, "_FILE")
 	path := os.Getenv(k)
-	if path == "" {
-		return nil, fmt.Errorf("%s is required", k)
+	value := os.Getenv(valueKey)
+	if path != "" && value != "" {
+		return nil, fmt.Errorf("set only %s or %s", valueKey, k)
 	}
+	if path == "" {
+		if value == "" {
+			return nil, fmt.Errorf("%s or %s is required", valueKey, k)
+		}
+		return validateSecret([]byte(value), valueKey, min)
+	}
+	return readSecret(path, k, min)
+}
+func validateSecret(b []byte, key string, min int) ([]byte, error) {
+	if len(b) < min || len(b) > 4096 {
+		return nil, fmt.Errorf("%s must contain %d..4096 bytes", key, min)
+	}
+	return b, nil
+}
+func readSecret(path, key string, min int) ([]byte, error) {
 	f, e := os.Open(path)
 	if e != nil {
-		return nil, fmt.Errorf("cannot open %s", k)
+		return nil, fmt.Errorf("cannot open %s", key)
 	}
 	defer f.Close()
-	b := make([]byte, 4097)
-	n, e := f.Read(b)
-	if e != nil && n == 0 {
-		return nil, fmt.Errorf("cannot read %s", k)
+	b, e := io.ReadAll(io.LimitReader(f, 4097))
+	if e != nil {
+		return nil, fmt.Errorf("cannot read %s", key)
 	}
-	b = []byte(strings.TrimSpace(string(b[:n])))
-	if len(b) < min || n > 4096 {
-		return nil, fmt.Errorf("%s must contain %d..4096 bytes", k, min)
+	if len(b) > 4096 {
+		return nil, fmt.Errorf("%s exceeds 4096 bytes", key)
+	}
+	return validateSecret([]byte(strings.TrimSpace(string(b))), key, min)
+}
+
+// Stdio needs a stable file-ticket key, but no HTTP MCP token. Keep the key
+// beside the private task database so MCPHub can configure only env values.
+func persistentTicketKey(dir string) ([]byte, error) {
+	if e := os.MkdirAll(dir, 0700); e != nil {
+		return nil, fmt.Errorf("cannot create STATE_DIR")
+	}
+	path := filepath.Join(dir, "ticket-key")
+	f, e := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if os.IsExist(e) {
+		return readSecret(path, "stored ticket key", 32)
+	}
+	if e != nil {
+		return nil, fmt.Errorf("cannot create stored ticket key")
+	}
+	var key [32]byte
+	_, e = rand.Read(key[:])
+	b := []byte(hex.EncodeToString(key[:]))
+	if e == nil {
+		_, e = f.Write(b)
+	}
+	if e == nil {
+		e = f.Sync()
+	}
+	closeErr := f.Close()
+	if e != nil || closeErr != nil {
+		_ = os.Remove(path)
+		return nil, fmt.Errorf("cannot save stored ticket key")
 	}
 	return b, nil
 }
@@ -69,20 +120,32 @@ func URL(value string) error {
 	return nil
 }
 func Load() (Config, error) {
+	return LoadForTransport(env("MCP_TRANSPORT", "http"))
+}
+
+func LoadForTransport(transport string) (Config, error) {
 	c := Config{Listen: env("LISTEN_ADDR", ":8080"), PublicURL: strings.TrimRight(env("PUBLIC_BASE_URL", "http://localhost:8080"), "/"), StateDir: env("STATE_DIR", "state"), StagingDir: env("STAGING_DIR", "staging"), CWABase: strings.TrimRight(os.Getenv("CWA_BASE_URL"), "/"), CWAUsername: os.Getenv("CWA_USERNAME"), CWAExpected: domain.Format(env("CWA_EXPECTED_FORMAT", "epub")), ZlibDomain: strings.TrimRight(os.Getenv("ZLIB_DOMAIN"), "/"), ZlibSession: os.Getenv("ZLIB_SESSION_FILE"), ZlibMode: env("ZLIB_MODE", "eapi"), TransferTimeout: 30 * time.Minute, ConfirmWindow: 15 * time.Minute}
+	c.Transport = transport
+	if transport != "http" && transport != "stdio" {
+		return c, fmt.Errorf("MCP_TRANSPORT/--transport must be http or stdio")
+	}
 	for _, v := range []string{c.PublicURL, c.CWABase} {
 		if e := URL(v); e != nil {
 			return c, fmt.Errorf("PUBLIC_BASE_URL/CWA_BASE_URL: %w", e)
 		}
 	}
 	var e error
-	c.MCPToken, e = secret("MCP_TOKEN_FILE", 32)
-	if e != nil {
-		return c, e
+	if transport == "http" {
+		c.MCPToken, e = secret("MCP_TOKEN_FILE", 32)
+		if e != nil {
+			return c, e
+		}
 	}
-	c.TicketKey, e = secret("TICKET_KEY_FILE", 32)
-	if e != nil {
-		return c, e
+	if transport == "http" || os.Getenv("TICKET_KEY_FILE") != "" || os.Getenv("TICKET_KEY") != "" {
+		c.TicketKey, e = secret("TICKET_KEY_FILE", 32)
+		if e != nil {
+			return c, e
+		}
 	}
 	p, e := secret("CWA_PASSWORD_FILE", 1)
 	if e != nil {
@@ -151,6 +214,12 @@ func Load() (Config, error) {
 		c.ConfirmWindow, e = time.ParseDuration(v)
 		if e != nil || c.ConfirmWindow <= 0 || c.ConfirmWindow > time.Hour {
 			return c, fmt.Errorf("CWA_CONFIRM_WINDOW must be >0 and <=1h")
+		}
+	}
+	if len(c.TicketKey) == 0 {
+		c.TicketKey, e = persistentTicketKey(c.StateDir)
+		if e != nil {
+			return c, e
 		}
 	}
 	return c, nil

@@ -144,8 +144,17 @@ func writeError(w http.ResponseWriter, e error) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"error": d})
 }
 func (a *App) Handler(version string) http.Handler {
-	mux := http.NewServeMux()
+	mux := a.fileMux()
 	mux.Handle("/mcp", a.authorize(mcp.Handler(a, version)))
+	return mux
+}
+
+// FileHandler serves ticket-authorized files when MCP runs over stdio.
+// It deliberately has no HTTP MCP endpoint or second MCP credential.
+func (a *App) FileHandler() http.Handler { return a.fileMux() }
+
+func (a *App) fileMux() *http.ServeMux {
+	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		io.WriteString(w, `{"status":"alive"}`)

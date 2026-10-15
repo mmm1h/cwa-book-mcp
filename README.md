@@ -2,7 +2,9 @@
 
 让多设备上的 Agent 通过 MCPHub 搜书、获取新书、上传本地书籍，并统一从 Calibre-Web Automated（CWA）取书。
 
-**P0–P4 开发与隔离验收已完成。** 五个工具、文件闭环、原版 CWA 集成及 Linux amd64/arm64 资源门槛均已验证；目标实例接入状态见 [plan/README.md](plan/README.md)。
+直接在 MCPHub 中用 `command/args/env` 添加，由 MCPHub 启动一个 Go 二进制。默认接入示例使用 stdio，无需单独部署本项目容器。
+
+**P0–P4 的 HTTP 基线开发与隔离验收已完成，MCPHub stdio 接入已补充验证。** 五个工具、文件闭环、原版 CWA 集成及 HTTP 基线的 Linux amd64/arm64 资源门槛有证据；目标 MCPHub 实例仍待接入，见 [plan/README.md](plan/README.md)。
 
 默认中文优先：CWA 中文 → Z-Library 中文 → CWA 其他语言 → Z-Library 其他语言。搜索与获取分开，用户选定书籍后才下载。
 
@@ -20,9 +22,9 @@
 
 固定 Go 1.27.2。`go vet ./...`、`go test ./... -timeout 90s`、`go build ./cmd/cwa-book-mcp` 可完成本地检查与构建。
 
-五个工具：search_books、acquire_book、upload_book、get_task、get_download_url。/mcp 使用 Bearer，文件接口使用短期票据；只有实际验证到 CWA 所需格式才 ready，上传响应不代表入库成功。
+五个工具：search_books、acquire_book、upload_book、get_task、get_download_url。stdio 使用 MCPHub 管理的标准输入输出，日志只写 stderr；可选 HTTP 模式的 /mcp 使用 Bearer。两种模式的文件接口都使用短期票据，只有实际验证到 CWA 所需格式才 ready，上传响应不代表入库成功。
 
-复制 `.env.example`，准备私有秘密文件并核对格式和代理规则后，使用 `docker compose build` / `up -d`。配置、UID 权限、MCPHub 示例、升级备份与故障处理见 [运行文档](docs/operations.md)。
+将对应架构的二进制放到 MCPHub 能执行的位置，将 [mcphub.json](examples/mcphub.json) 合并到 MCPHub 配置，替换程序路径、CWA 地址/账号和文件入口即可。stdio 模式自动在 STATE_DIR 保存票据密钥，无需 MCP token。安装位置、文件入口、升级备份与故障处理见 [运行文档](docs/operations.md#mcphub-直接启动推荐)。Docker/Compose 只作为可选 HTTP 运行方式和隔离测试工具。
 
 ## 从这里开始
 

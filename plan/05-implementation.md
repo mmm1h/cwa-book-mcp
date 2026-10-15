@@ -24,7 +24,7 @@
 读取：架构、接口契约、内存预算。
 
 - 沿用 P0 的依赖基线，建立入口、配置校验、优雅退出。
-- 一个 net/http 服务承载 /mcp 与文件接口；Bearer 校验覆盖 MCP 请求。
+- MCPHub 托管一个 stdio 进程并在同进程提供文件接口；可选 net/http 模式承载 /mcp 与文件接口，Bearer 校验覆盖 HTTP MCP 请求。
 - 注册五个工具，测试中接替身；尚未实现的真实操作明确返回 NOT_IMPLEMENTED，不让生产路径返回模拟成功。
 - 实现 bbolt schema_version、任务记录、request_id 幂等索引、到期索引。
 - 实现单 worker、有界传输许可、背压与恢复扫描，以及非终态总寿命和取消回收。
@@ -71,7 +71,7 @@
 - 在 128 MiB 容器内验证大文件、慢连接、取消、队列积压和重启。
 - 修复资源泄漏和无界分配，再固定发布默认配置。
 - 构建 Linux amd64/arm64 二进制与非 root 精简镜像。
-- 提供 Docker Compose 和 MCPHub 配置示例；只用占位符。
+- 提供原生 MCPHub command/args/env 配置与可选 HTTP/Docker Compose 示例；只用占位符。
 - 记录实际配置键、运行命令、升级、备份、恢复和故障排查。
 - 写入真实 benchmark 摘要，不复制目标数字冒充成绩。
 - 对依赖和产物生成必要的许可证说明。

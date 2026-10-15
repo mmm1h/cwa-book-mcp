@@ -11,15 +11,15 @@
 ```sh
 go vet ./...
 go test ./... -timeout 90s
-go test -race ./internal/store ./internal/files ./internal/jobs ./internal/catalog ./internal/server ./internal/source/zlib -timeout 120s
+go test -race ./cmd/cwa-book-mcp ./internal/config ./internal/mcp ./internal/store ./internal/files ./internal/jobs ./internal/catalog ./internal/server ./internal/source/zlib -timeout 120s
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o dist/cwa-book-mcp-linux-amd64 ./cmd/cwa-book-mcp
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags='-s -w' -o dist/cwa-book-mcp-linux-arm64 ./cmd/cwa-book-mcp
 ```
 
-镜像只运行一个 Go 进程，无额外数据库或转换器。更新依赖后执行
+运行只需一个 Go 二进制，无额外数据库或转换器；构建机器需要 Go，MCPHub 运行机器不需要安装 Go。更新依赖后执行
 `go run ./tools/notices` 重建[第三方许可证](../third_party/licenses/README.md)，复核书源最小补丁。
 
-打包两个 Linux 架构的二进制、许可证和 SHA-256 清单：
+打包两个 Linux 架构的二进制、MCPHub 示例、运行文档、许可证和 SHA-256 清单：
 
 ```sh
 go run ./tools/package -version dev -out dist
@@ -27,7 +27,23 @@ go run ./tools/package -version dev -out dist
 
 发布或私有部署时将 version 换成确认过的代码版本。tar.gz 内的主程序权限为 0755；固定 Go、源码和 version 时使用 `-trimpath -buildvcs=false` 与固定归档时间生成可重复产物。开发构建与测试证据见 [构建记录](releases/development-acebc97.md)。
 
-## 首次配置
+## MCPHub 直接启动（推荐）
+
+1. 将对应 MCPHub 运行平台的 Linux amd64/arm64 归档解压到 MCPHub 能执行的位置，例如 `/opt/cwa-book-mcp`。归档内主程序名为 `cwa-book-mcp`；可运行 `--version` 检查。使用已有二进制时无需 Docker 或 Go 运行时。
+2. 将 [mcphub.json](../examples/mcphub.json) 合并到 MCPHub 的 `mcpServers`。替换 command 的绝对路径、CWA 地址、账号/密码、私有 state/staging 目录和 PUBLIC_BASE_URL；args 为 `["--transport=stdio"]`，perSessionClient 保持 false。
+3. MCPHub 保存并启用服务后，通过 stdio 管道完成 initialize、tools/list、tools/call。先保持 CWA_WRITE_ENABLED=false，用现有 CWA 书测试 search_books、get_download_url 和实际文件 GET；新增书籍仍需先核对 CWA 格式规则后启用写入。
+
+command 和 env 中的路径均属于 **MCPHub 的运行环境**。若 MCPHub 原本就在容器中，程序和可写 state/staging 目录需要出现在那个已有容器内；宿主机路径不会自动可见。这种方式仍只新增本项目的一个 Go 子进程，无需另建本项目容器。state/staging 使用绝对路径且由运行 MCPHub 的账号读写，避免依赖其工作目录；备份时同时保存 state 中的 ticket-key。
+
+stdio 支持通过 CWA_PASSWORD 直接设置服务端密码，也支持 CWA_PASSWORD_FILE；同一凭据只能选一种形式。MCP token 不需要配置，未显式提供 TICKET_KEY/TICKET_KEY_FILE 时，程序在私有 STATE_DIR 自动创建并复用 0600 的 ticket-key。stdout 只输出 MCP JSON-RPC，日志写 stderr；错误不会打印密码或密钥。
+
+同一进程还会监听 LISTEN_ADDR，提供短期授权文件 PUT/GET 与健康检查，stdio 模式不暴露 HTTP /mcp。PUBLIC_BASE_URL 必须是 **Agent 设备能够访问的文件入口**，可通过已有反向代理转发到该监听地址；含路径前缀时需剥离前缀。添加 stdio 服务解决工具连接，文件入口的可达性仍需配置和验证。
+
+MCPHub 共享一个上游子进程，设备断线不会停止后台任务。MCPHub 停止服务、关闭 stdin 或重启时，本进程退出、文件接口关闭，持久任务在下次启动恢复。不要为各设备设置 perSessionClient=true；一个状态库只允许一个进程打开。
+
+MCPHub 的 command/args/env 与 perSessionClient 字段以[官方配置说明](https://docs.mcphub.app/configuration/mcp-settings)为依据；目标实例的版本与完整连接仍需 P5 验收。原生 Windows 使用同版本 Go 构建 `.exe` 并填写该环境内的 Windows 绝对路径。
+
+## 可选 HTTP 模式配置
 
 复制 `.env.example` 为被忽略的 `.env`，填写 CWA 内网地址、专用账号、PUBLIC_BASE_URL、格式和两段通路上限；先保持 `CWA_WRITE_ENABLED=false`。
 PUBLIC_BASE_URL 是设备文件入口；含路径前缀时反向代理需剥离前缀再转发。
@@ -57,12 +73,15 @@ Compose 仅新增本项目服务：128 MiB、禁用 swap、只读根文件系统
 
 | 键 | 默认 / 约束 |
 | --- | --- |
-| LISTEN_ADDR | :8080；MCP 和文件共用监听 |
+| MCP_TRANSPORT / --transport | http；推荐 MCPHub args 显式指定 --transport=stdio，命令行优先于环境变量 |
+| LISTEN_ADDR | :8080；stdio 时为文件监听，http 时 MCP 和文件共用监听 |
 | PUBLIC_BASE_URL | http://localhost:8080；设备可达文件入口 |
 | STATE_DIR / STAGING_DIR | state / staging；本服务私有目录 |
-| MCP_TOKEN_FILE / TICKET_KEY_FILE | 必填；各 32..4096 字节 |
+| MCP_TOKEN / MCP_TOKEN_FILE | HTTP 模式必填，stdio 不使用；32..4096 字节，二选一 |
+| TICKET_KEY / TICKET_KEY_FILE | 32..4096 字节，二选一；HTTP 必填，stdio 可省略并自动保存到 STATE_DIR |
 | CWA_BASE_URL | 必填；优先内网 |
-| CWA_USERNAME / CWA_PASSWORD_FILE | 必填；专用账号及密码文件 |
+| CWA_USERNAME | 必填；专用账号 |
+| CWA_PASSWORD / CWA_PASSWORD_FILE | 必填；密码值或密码文件，二选一 |
 | CWA_WRITE_ENABLED | false；操作者确认 CWA 规则后启用 |
 | CWA_EXPECTED_FORMAT | epub；创建任务时固定 |
 | CWA_INPUT_FORMATS / CWA_OUTPUT_FORMATS | epub,pdf；按实际转换、保留和忽略规则收紧 |
@@ -73,7 +92,7 @@ Compose 仅新增本项目服务：128 MiB、禁用 swap、只读根文件系统
 | ZLIB_DOMAIN / ZLIB_SESSION_FILE | 可留空以只用 CWA；可信入口及私有会话文件 |
 | ZLIB_MODE | eapi；首版只启用已验证通路 |
 | ZLIB_FILE_ORIGINS | 可空；逗号分隔的额外精确 origin，仅填经核实的书源 CDN |
-| GOMEMLIMIT | Compose 为 64MiB；不是 RSS 硬限制 |
+| GOMEMLIMIT | MCPHub 示例和 Compose 为 64MiB；不是 RSS 硬限制 |
 | CWA_DEBUG_METRICS_FILE | 默认禁用；测试时写私有 heap/goroutine JSON，无 HTTP debug 端点 |
 
 客户端不能传任意 URL、服务器路径或源站凭据。上游只访问配置的 origin，最多五次重定向，跨 origin 不转发认证头和 Cookie。书源元数据串行；压缩前/解压后各至多 4 MiB，每次 10 秒，控制查询总计 30 秒。文件最长 30 分钟、停滞 60 秒，复制缓冲固定 64 KiB。
@@ -86,11 +105,11 @@ Compose 仅新增本项目服务：128 MiB、禁用 swap、只读根文件系统
 {"cookies":{"remix_userid":"<SOURCE_USER_ID>","remix_userkey":"<SOURCE_USER_KEY>"}}
 ```
 
-Compose 路径为 `/data/state/zlib-session.json`。会话失效后操作者安全替换文件；适配器每次操作重新读取，无须向设备发凭据。认证、验证码或额度错误使任务 blocked，恢复后显式 retry。未配置书源时 CWA 仍可读；需要书源却不可用时返回 partial 和原因，不声称没有中文。
+MCPHub stdio 接入可将 ZLIB_DOMAIN 和 ZLIB_SESSION_FILE 加入 env，文件路径必须在 MCPHub 运行环境中可读；可只配置 CWA，后续再启用书源。Compose 的会话路径为 `/data/state/zlib-session.json`。会话失效后操作者安全替换文件；适配器每次操作重新读取，无须向设备发凭据。认证、验证码或额度错误使任务 blocked，恢复后显式 retry。未配置书源时 CWA 仍可读；需要书源却不可用时返回 partial 和原因，不声称没有中文。
 
 ## MCPHub 与文件操作
 
-[mcphub.json](../examples/mcphub.json) 是聚合示例。操作者替换 Bearer，并按实际 MCPHub 版本确认协议和上游网络允许规则；示例不能作为目标兼容证据。
+[mcphub.json](../examples/mcphub.json) 为推荐的 stdio 启动配置；[mcphub-http.json](../examples/mcphub-http.json) 用于已有独立 HTTP 进程，需替换 Bearer。按实际 MCPHub 版本确认协议与运行环境；示例不能作为目标兼容证据。
 
 - 现有 CWA 书：search_books → 选候选/已有格式 → get_download_url → 完整 GET。
 - 新书：search_books → 用户选择 → acquire_book(start) → get_task → ready 后取 CWA 链接。
@@ -108,6 +127,8 @@ PUT 必须带 Content-Length 和 application/octet-stream；失败从头传。�
 
 停止本服务后复制 STATE_DIR 与对应完整 STAGING_DIR 到私有备份，不在写入中直接复制 bbolt。CWA 书库由其现有运维独立备份。schema_version 不兼容时启动失败并保留旧库，一个 state.db 只允许一个实例。
 
+stdio 原生升级：在 MCPHub 中停用该条目，备份 state/staging 和票据密钥，替换二进制，再启用条目。票据密钥文件损坏时启动失败，不会悄悄重建导致所有已发票据失效。
+
 重启清理 .part、验证已发布成品并补记 queued；submitting/uncertain/reconciling 保留截止时间、先查库。只备份数据库导致输入缺失时：设备文件重新 prepare，源文件可重新获取，但可能已提交任务仍先核对。取消不删除 CWA 记录。
 任务最长 24 小时，含 awaiting_upload/blocked/needs_review；终态最多 1000 条、最长 7 天，幂等记录随历史清理。ready/failed/cancelled 暂存文件在结束或下次启动清理。
 
@@ -122,6 +143,9 @@ PUT 必须带 Content-Length 和 application/octet-stream；失败从头传。�
 | STORAGE_FULL / BUSY | 取消不需要的任务、处理磁盘余量或等待 |
 | CWA 记录被删/HTML 错误页/无权限 | 报告失效，不回退到书源或暂存 |
 | RSS/OOM | 保存私有摘要，分析资源生命周期，不提高 128 MiB 门槛 |
+| MCPHub command 找不到 / 权限错误 | 检查 MCPHub 运行环境内的程序绝对路径、平台架构与执行权限 |
+| cannot listen on LISTEN_ADDR | 选择同一运行环境中未占用的端口，同步文件入口转发 |
+| 工具可调用但文件 URL 不可达 | 检查 PUBLIC_BASE_URL、LISTEN_ADDR 和已有反向代理，直接验证 GET/PUT |
 
 ## 复现验收
 
@@ -153,7 +177,7 @@ go run ./tools/check-report .work/resources.json
 | CWA 专用账号与权限 | 读取、下载与网页上传；密码只放服务端秘密文件 |
 | 当前转换、保留/忽略、合并与清理规则 | 填写输入/输出格式和目标格式声明；程序不调整规则 |
 | Z-Library 可信入口、合法会话与必要 CDN origin | 验证真实搜索、下载与账号阻塞，显式启用，不在公共 CI 消耗额度 |
-| MCPHub 实际版本、接入位置与 Bearer | 验证聚合后的 initialize/tools/list/tools/call |
+| MCPHub 实际版本、程序位置与启动环境（可选 HTTP 的 Bearer） | 验证 stdio command/args/env 和聚合后的 initialize/tools/list/tools/call |
 | PUBLIC_BASE_URL、两段完整请求上限与代理超时 | 验证 Agent PUT/GET 和 Cloudflare 大文件通路 |
 | 首个具备文件 I/O 的 Agent 及第二设备 | 验证本地上传、断线后后台继续、跨设备查任务与保存文件 |
 

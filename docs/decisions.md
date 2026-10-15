@@ -42,7 +42,7 @@
 
 ## D06：任务独立于传输会话
 
-已接受。后台任务在持久化后继续执行；MCPHub 重连或设备离线不影响任务。服务通过 Streamable HTTP 常驻运行，不按设备启动独立业务进程。
+已接受。后台任务在持久化后继续执行；设备离线不影响任务。MCPHub 托管共享 stdio 进程，可选独立 Streamable HTTP；不按设备启动独立业务进程。MCPHub 停止子进程时暂停执行，重启后恢复，详见 D11。
 
 不使用请求超时作为下载任务生命周期，不把长时间 CWA 转换塞进一次阻塞工具调用。
 
@@ -74,3 +74,13 @@ HTTP client/context 注入修正，保留 MIT 许可证与改动清单；不使�
 有界候选缓存会淘汰记录，已签发的有效下载链接不能因此失效。下载票据签名同时绑定 CWA ID/UUID、格式、用途与截止时间，HTTP GET 仍读取 CWA 详情并验证记录身份，不依赖候选缓存保留，也不将缓存当作书库。已移除或替换的记录不能交付。
 
 实施：[接口契约](../plan/03-contracts.md)、internal/server；证据见 [验证记录](validation.md)。
+
+## D11：MCPHub 直接启动 stdio，容器交付改为可选
+
+2026-10-15 用户明确要求直接添加到 MCPHub，无需为本项目部署 Docker 容器。补充原生 stdio 入口，默认 MCPHub 示例通过 command/args/env 启动一个 Go 二进制；既有 HTTP 模式保留用于可选独立运行和已有资源基线，不再作为接入前提。
+
+stdio 与 HTTP 复用五个工具、任务、CWA 和流式文件处理。文件接口仍在同一进程监听 HTTP，由 PUBLIC_BASE_URL 提供设备可达地址；不把书籍编码进 MCP。stdio 不暴露 HTTP /mcp，不需 MCP token，支持 CWA_PASSWORD 环境变量并在私有 STATE_DIR 自动保存票据密钥。文件凭据形式也继续可用。
+
+MCPHub 使用 perSessionClient=false，共享单进程；设备断线不停止任务。MCPHub 关闭 stdin 或停止进程时释放 worker、监听和状态库，重启按原恢复规则继续。原版 CWA 与 Linux 资源测试的既有结果属于 HTTP 基线，不能据此声称目标 MCPHub 或 stdio 双架构资源验收已通过。
+
+实施：[运行文档](operations.md#mcphub-直接启动推荐)、[接口契约](../plan/03-contracts.md)；证据见 [验证记录](validation.md#mcphub-stdio-接入修正)。

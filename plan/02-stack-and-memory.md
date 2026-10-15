@@ -7,14 +7,14 @@
 | 层 | 选择 | 理由与限制 |
 | --- | --- | --- |
 | 语言 / 编译器 | Go 1.27.2，go.mod、Dockerfile 和 CI 精确固定 | 复用书源核心，单二进制，避免解释器常驻；升级后重新验证 |
-| MCP | 官方 modelcontextprotocol/go-sdk v1.8.0 | Streamable HTTP，复用协议与 schema 支持 |
+| MCP | 官方 modelcontextprotocol/go-sdk v1.8.0 | stdio 由 MCPHub 启动；可选 Streamable HTTP，复用同一套工具与 schema |
 | HTTP | net/http、标准库 TLS、CookieJar | 不加 Gin/Fiber 等 Web 框架 |
 | 书源 | heartleo/zlib 的 Go 包 | 优先导入核心库，不启动 CLI/TUI |
 | CWA | 自写小型 HTTP adapter | 复用 OPDS 与网页上传流程，不复制 CWA 实现 |
 | 持久化 | go.etcd.io/bbolt v1.5.0 | 单进程嵌入式 KV，无独立数据库和 CGo 依赖 |
 | 编解码 | encoding/json、encoding/xml | OPDS 流式解析；HTML 表单只解析受限响应 |
 | 日志 | log/slog | 结构化、脱敏；不引入常驻遥测服务 |
-| 交付 | Linux amd64/arm64 单二进制和精简镜像 | 运行镜像保留 CA 证书，非 root 运行 |
+| 交付 | Linux amd64/arm64 单二进制；镜像为可选交付 | MCPHub 可直接执行二进制；HTTP 隔离验收镜像保留 CA 证书、非 root 运行 |
 
 不使用 Python、Node.js 应用运行时、浏览器、n8n、Redis、Postgres、全文搜索引擎或另一个转换程序。开发测试优先 Go；仓库校验可用 Go 或平台自带 shell，不引入 Python 工具链。
 
@@ -62,7 +62,7 @@ GOMEMLIMIT 是 Go 运行时软限制，不能限制全部 RSS、mmap、内核缓
 | 同时执行的控制请求 | 8，超出返回可重试的繁忙状态 |
 | 未结束任务 | 32，超过拒绝新增 |
 | 流复制缓冲 | 每传输 64 KiB，池有固定上界 |
-| MCP 控制请求体 | 256 KiB |
+| MCP 控制请求体 / stdio 单帧 | 256 KiB |
 | 单次工具结果 | 128 KiB，默认 20 个候选，上限 50 |
 | OPDS/书源元数据响应 | 解压后 4 MiB，压缩前也设上限 |
 | 单次搜索分页预算 | CWA、书源各最多 3 页；同渠道的不同语言查询共用预算，未查完标记 incomplete |

@@ -79,3 +79,16 @@ UUID 详情核验、Basic 鉴权、HTML 登录页识别通过。书源仅启用 
 两架构均完成 5 分钟空闲、三档文件混合传输、100 个顺序任务、1000 条历史和 30 分钟稳定性，八项资源门槛全部通过。停滞上传取消、部分上传崩溃恢复、32 任务积压、文件接口背压与未知提交重启五项故障也均通过。最终数字、cgroup 判定方法与未改写的原始 JSON 见 [资源报告](benchmarks/README.md)。
 
 Linux amd64/arm64 二进制、非 root 镜像和 Compose 均已验证；两个独立输出目录的归档和二进制 SHA-256 一致。构建方法及四个校验值见 [构建记录](releases/development-acebc97.md)。源码、替身、原版 CWA 和目标实例的证据等级分别保留；目标 P5 所需配置与验收步骤集中在 [运行文档](operations.md#目标实例验收所需输入)。
+
+## MCPHub stdio 接入修正
+
+2026-10-15：按用户要求补充 MCPHub command/args/env 直接启动，默认接入示例改为 stdio。本段记录本次代码和测试的证据，前述原版 CWA 与资源记录仍属于 `acebc97` HTTP 基线。
+
+- `go test ./... -timeout 90s`、`go vet ./...` 和包含 cmd/config/mcp 及原重点模块的 `go test -race ... -timeout 120s` 在 Windows amd64 通过。竞态检查曾发现新增并发测试共享 SDK 可变请求参数；修正为每次请求独占参数后通过，不修改 SDK。
+- `cmd/cwa-book-mcp` 的真实子进程管道执行应用入口，通过官方 SDK CommandTransport 完成 initialize、五工具发现和五工具实际调用；stdout 只承载协议消息，日志使用 stderr。
+- 合成 EPUB 经文件 HTTP PUT 和 CWA 替身入库到 PDF，实际文件验证后 ready；已有 CWA 文件 GET 的 SHA-256 一致。关闭 stdin 后子进程正常退出，重启后持久任务和原上传/下载票据仍可用，状态库锁与文件监听被释放。该项使用 CWA HTTP 替身，不是目标 CWA 或 MCPHub 实测。
+- 超过 256 KiB 的 stdio 帧与文件端口被占用时均拒绝；stdio 文件监听没有 HTTP /mcp。八个工具调用已进入 backend 后，第九个收到结构化 BUSY，完成后许可可继续使用。
+- 环境变量密码与秘密文件二选一，超限凭据拒绝；stdio 不需 MCP token，自动票据密钥持久保存，已有密钥损坏时启动失败而非重建。HTTP 模式仍要求有效 MCP 凭据。
+- Linux amd64/arm64 归档与 Windows amd64 二进制已构建，Windows `--version`/`--help` 可运行；Linux 归档包含两种 MCPHub 示例和许可证，见 [构建记录](releases/development-stdio-20261015.md)。
+
+新增 stdio 模式未执行 Linux 双架构完整资源长测，也未修改或连接现有 NAS/MCPHub。目标 MCPHub 上的程序位置、文件入口和上游账号仍需按 [运行文档](operations.md#mcphub-直接启动推荐)安全配置并验收。

@@ -4,7 +4,8 @@
 
 ## 共通规则
 
-- MCP 路径 /mcp，使用 Streamable HTTP；业务后台任务独立于工具请求。
+- MCPHub 默认以 command/args/env 启动 stdio 程序，五个工具与可选 Streamable HTTP /mcp 共用实现；业务后台任务独立于设备工具请求。
+- stdio 只在 stdout 写 MCP JSON-RPC，日志写 stderr；单帧至多 256 KiB，工具调用至多八个、每次最多 30 秒。stdin EOF 关闭本进程，任务在下次启动恢复；MCPHub 必须共享一个进程（perSessionClient=false）。
 - 工具返回结构化小结果；禁止书籍字节、Cookie、密码、源站下载凭据进入工具结果。
 - 业务错误在 isError=true 时仍保留 structuredContent.error 的 code、message、retryable，另提供文本 JSON；并发背压可有限重试。
 - 标识符由服务产生。Agent 不能指定服务器文件路径、任意下载 URL 或任意 CWA 上游地址。
@@ -98,7 +99,7 @@ ready 返回 CWA ID、已验证格式和 verification_basis。该字段必须区
 
 ### 下载与授权
 
-- MCPHub 到 /mcp 使用配置的 Bearer 凭据；文件端点使用短期、用途受限的票据。
+- stdio 模式通过 MCPHub 的子进程管道访问工具，不需要 MCP token，也不暴露 HTTP /mcp。可选 HTTP 模式的 /mcp 使用配置的 Bearer 凭据；两种模式的文件端点都使用短期、用途受限的票据。
 - 下载票据绑定 CWA ID、UUID、格式和到期时间，不依赖候选缓存保留；在有效期内可重试完整 GET。首版不支持 Range/断点续传，不返回 206；传输失败需重新获取完整文件。
 - 转发请求在服务端附加 CWA 凭据；源站/CWA Cookie 不返回给设备。
 - Content-Type、Content-Disposition、长度和重定向要验证；登录页即使 HTTP 200 也不是有效书籍。

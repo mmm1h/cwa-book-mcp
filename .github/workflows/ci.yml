@@ -16,6 +16,6 @@ jobs:
       - run: test -z "$(gofmt -l cmd internal tools)"
       - run: go vet ./...
       - run: go test ./... -timeout 90s
-      - run: go test -race ./internal/store ./internal/files ./internal/jobs ./internal/catalog ./internal/server ./internal/source/zlib -timeout 120s
+      - run: go test -race ./cmd/cwa-book-mcp ./internal/config ./internal/mcp ./internal/store ./internal/files ./internal/jobs ./internal/catalog ./internal/server ./internal/source/zlib -timeout 120s
       - run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' ./cmd/cwa-book-mcp
       - run: CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags='-s -w' ./cmd/cwa-book-mcp

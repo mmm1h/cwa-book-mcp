@@ -23,11 +23,12 @@
 | 如何证明实现正确？ | [验收矩阵](../plan/06-validation.md) |
 | 如何让下一位 Agent 接手？ | [交接](../plan/07-agent-handoff.md) |
 | 部署需要哪些输入？如何恢复？ | [运维设计](operations.md) |
+| 如何在 MCPHub 里用 command/args/env 直接启动？ | [原生 stdio 接入](operations.md#mcphub-直接启动推荐)、[配置示例](../examples/mcphub.json) |
 | 为什么采用这些边界？ | [决策记录](decisions.md) |
 | 上游代码到底证明了什么？ | [研究证据](research/upstream-audit.md) |
 | 哪些运行测试已经通过？ | [验证记录](validation.md) |
 | 实测资源、采样方法和原始数字？ | [资源报告](benchmarks/README.md) |
-| 可重复构建与二进制校验值？ | [开发构建](releases/development-acebc97.md) |
+| 构建与二进制校验值？ | [stdio 开发构建](releases/development-stdio-20261015.md)、[HTTP 基线](releases/development-acebc97.md) |
 
 ## 当前文件与未来目录
 

@@ -1,10 +1,19 @@
 {
   "mcpServers": {
     "cwa-books": {
-      "type": "streamable-http",
-      "url": "http://cwa-book-mcp:8080/mcp",
-      "headers": {
-        "Authorization": "Bearer <MCP_SERVICE_TOKEN>"
+      "type": "stdio",
+      "command": "/opt/cwa-book-mcp/cwa-book-mcp",
+      "args": ["--transport=stdio"],
+      "env": {
+        "CWA_BASE_URL": "http://calibre-web-automated:8083",
+        "CWA_USERNAME": "<CWA_SERVICE_USER>",
+        "CWA_PASSWORD": "<CWA_SERVICE_PASSWORD>",
+        "CWA_WRITE_ENABLED": "false",
+        "STATE_DIR": "/data/cwa-book-mcp/state",
+        "STAGING_DIR": "/data/cwa-book-mcp/staging",
+        "LISTEN_ADDR": ":8080",
+        "PUBLIC_BASE_URL": "https://books.example.invalid",
+        "GOMEMLIMIT": "64MiB"
       },
       "perSessionClient": false,
       "enabled": true

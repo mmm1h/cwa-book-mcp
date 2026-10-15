@@ -108,6 +108,11 @@ func pack(path, binary string) (err error) {
 	if err = add("LICENSE", "LICENSE", 0644); err != nil {
 		return err
 	}
+	for _, doc := range []string{"examples/mcphub.json", "examples/mcphub-http.json", "docs/operations.md"} {
+		if err = add(doc, doc, 0644); err != nil {
+			return err
+		}
+	}
 	if err = filepath.WalkDir("third_party/licenses", func(path string, d os.DirEntry, e error) error {
 		if e != nil {
 			return e

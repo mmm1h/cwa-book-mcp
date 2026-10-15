@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"flag"
 	"fmt"
 	"log/slog"
 	"net"
@@ -16,45 +18,61 @@ import (
 	"github.com/mmm1h/cwa-book-mcp/internal/diagnostics"
 	"github.com/mmm1h/cwa-book-mcp/internal/files"
 	"github.com/mmm1h/cwa-book-mcp/internal/jobs"
+	"github.com/mmm1h/cwa-book-mcp/internal/mcp"
 	"github.com/mmm1h/cwa-book-mcp/internal/server"
 	zlib "github.com/mmm1h/cwa-book-mcp/internal/source/zlib"
 	"github.com/mmm1h/cwa-book-mcp/internal/store"
+	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 var version = "dev"
 
 func main() {
-	if len(os.Args) == 2 && os.Args[1] == "--healthcheck" {
+	if e := run(os.Args[1:]); e != nil && !errors.Is(e, flag.ErrHelp) {
+		slog.Error("service stopped", "error", e)
+		os.Exit(1)
+	}
+}
+func run(args []string) error {
+	flags := flag.NewFlagSet("cwa-book-mcp", flag.ContinueOnError)
+	defaultTransport := os.Getenv("MCP_TRANSPORT")
+	if defaultTransport == "" {
+		defaultTransport = "http"
+	}
+	transport := flags.String("transport", defaultTransport, "MCP transport: stdio (MCPHub command) or http")
+	showVersion := flags.Bool("version", false, "print version and exit")
+	healthcheck := flags.Bool("healthcheck", false, "check the local HTTP file listener")
+	if e := flags.Parse(args); e != nil {
+		return e
+	}
+	if flags.NArg() != 0 {
+		return fmt.Errorf("unexpected positional arguments")
+	}
+	if *showVersion {
+		fmt.Println(version)
+		return nil
+	}
+	if *healthcheck {
 		address := os.Getenv("LISTEN_ADDR")
 		if address == "" {
 			address = ":8080"
 		}
 		_, port, e := net.SplitHostPort(address)
 		if e != nil {
-			os.Exit(1)
+			return fmt.Errorf("invalid LISTEN_ADDR")
 		}
 		client := http.Client{Timeout: 4 * time.Second}
 		response, e := client.Get("http://127.0.0.1:" + port + "/healthz")
 		if e != nil {
-			os.Exit(1)
+			return fmt.Errorf("healthcheck failed")
 		}
 		response.Body.Close()
 		if response.StatusCode != 200 {
-			os.Exit(1)
+			return fmt.Errorf("healthcheck failed")
 		}
-		return
+		return nil
 	}
-	if len(os.Args) == 2 && os.Args[1] == "--version" {
-		fmt.Println(version)
-		return
-	}
-	if e := run(); e != nil {
-		slog.Error("service stopped", "error", e)
-		os.Exit(1)
-	}
-}
-func run() error {
-	c, e := config.Load()
+	c, e := config.LoadForTransport(*transport)
 	if e != nil {
 		return e
 	}
@@ -81,41 +99,65 @@ func run() error {
 		return e
 	}
 	app := server.New(service)
-	httpServer := &http.Server{Addr: c.Listen, Handler: app.Handler(version), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 60 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
+	handler := app.FileHandler()
+	if c.Transport == "http" {
+		handler = app.Handler(version)
+	}
+	httpServer := &http.Server{Addr: c.Listen, Handler: handler, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 60 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
+	// Bind before answering initialize, so MCPHub cannot see a connected service
+	// whose file listener immediately fails (for example because the port is busy).
+	listener, e := net.Listen("tcp", c.Listen)
+	if e != nil {
+		return fmt.Errorf("cannot listen on LISTEN_ADDR")
+	}
+	defer listener.Close()
 	worker := make(chan error, 1)
 	go func() { worker <- service.Run(ctx) }()
 	serving := make(chan error, 1)
-	go func() { serving <- httpServer.ListenAndServe() }()
-	slog.Info("service started", "version", version, "cwa_write_enabled", c.CWAWrite)
+	go func() { serving <- httpServer.Serve(listener) }()
+	var stdio chan error
+	if c.Transport == "stdio" {
+		stdio = make(chan error, 1)
+		go func() { stdio <- mcp.NewServer(app, version).Run(ctx, &sdk.StdioTransport{MaxLineLength: 256 << 10}) }()
+	}
+	slog.Info("service started", "version", version, "transport", c.Transport, "cwa_write_enabled", c.CWAWrite)
 	workerDone := false
+	stdioDone := false
 	select {
 	case <-ctx.Done():
 	case e = <-worker:
 		workerDone = true
-		stop()
 	case e = <-serving:
-		stop()
+	case e = <-stdio:
+		stdioDone = true
 	}
+	stop()
 	shutdown, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	if err := httpServer.Shutdown(shutdown); err != nil {
 		_ = httpServer.Close()
 	}
-	if workerDone {
-		if e == http.ErrServerClosed {
-			return nil
+	if !workerDone {
+		select {
+		case workerErr := <-worker:
+			if e == nil {
+				e = workerErr
+			}
+		case <-shutdown.Done():
+			return fmt.Errorf("worker shutdown deadline exceeded")
 		}
-		return e
 	}
-	select {
-	case workerErr := <-worker:
-		if e == nil {
-			e = workerErr
+	if stdio != nil && !stdioDone {
+		select {
+		case stdioErr := <-stdio:
+			if e == nil {
+				e = stdioErr
+			}
+		case <-shutdown.Done():
+			return fmt.Errorf("stdio shutdown deadline exceeded")
 		}
-	case <-shutdown.Done():
-		return fmt.Errorf("worker shutdown deadline exceeded")
 	}
-	if e == http.ErrServerClosed {
+	if errors.Is(e, http.ErrServerClosed) || errors.Is(e, context.Canceled) {
 		return nil
 	}
 	return e
