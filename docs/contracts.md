@@ -7,7 +7,7 @@ stdio 是唯一 MCP 传输；HTTP 仅用于授权文件。默认启动无交互�
 | 工具             | 输入与行为                                                                                                                                      |
 | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | search_books     | query 必填；author 可选；language 默认 zh_preferred，可用 any 或语言代码；formats 为 epub/pdf 数组；limit 默认 20、最大 50；cursor 可续查       |
-| acquire_book     | action 默认 start，需要 request_id、candidate_id、required_format；retry/cancel 使用 task_id；resolve 使用 task_id 与 choices 中的 candidate_id |
+| acquire_book     | action 默认 start，需要 request_id、candidate_id、required_format；retry/cancel 使用 task_id；resolve 使用 task_id 与 CWA candidate_id          |
 | upload_book      | action 默认 prepare，需要 request_id、title、filename、size_bytes、required_format；可选 authors、language、sha256；refresh_ticket 使用 task_id |
 | get_task         | task_id；返回当前持久任务和可供 resolve 的 choices                                                                                              |
 | get_download_url | task_id；仅 ready，重新核验 CWA 身份与文件后返回 url、expires_at、size_bytes、sha256                                                            |
@@ -18,7 +18,7 @@ search_books 返回 candidates、selected_tier、searched、partial、warnings�
 
 默认优先 CWA 中文 → 书源中文 → CWA 其他 → 书源其他，找到一层候选后只分页该层；language:any 采用 CWA → 书源。每次调用最多读取三个上游页，不完整时用 next_cursor 继续。上游失败会返回 partial/warnings，不降级为“无结果”；未配置书源时明确标记 SOURCE_NOT_CONFIGURED，并可返回书库其他语言结果。语言来自元数据，不从书名字符推断。
 
-上传 title/authors/language 应与文件元数据对应，本工具不会改写书名。EPUB/PDF 以外输入拒绝；sha256 可用于整文件完整性校验。CWA 多个匹配进入 needs_review，必须由调用方选择当前 choices 中的候选。resolve 不允许绕过语言或 ID/UUID 校验。
+上传 title/authors/language 应与文件元数据对应，本工具不会改写书名。EPUB/PDF 以外输入拒绝；sha256 可用于整文件完整性校验。CWA 多个匹配进入 needs_review，由调用方选择 choices 中的候选。提交后因入库元数据差异无法自动确认时，也可重新 search_books，再 resolve 明确选择 CWA 记录；这不会改写元数据。resolve 始终保留语言与 ID/UUID 校验。
 
 ## 任务状态
 
@@ -35,9 +35,9 @@ search_books 返回 candidates、selected_tier、searched、partial、warnings�
 
 ready 表示 verification.at 时点的验证结果；下载仍重新核对，不能使用曾经成功的结果绕过 CWA 删除、身份改变或文件损坏。get_task 不自动发放下载地址。
 
-CWA HTTP 200、上传返回 location、书源成功下载都不等于 ready。EPUB 校验 ZIP 路径、重复/加密/符号链接条目、数量、展开大小、每条目 CRC、mimetype、container 与包文件；PDF 校验头部和 EOF 标记。这是基础完整性验证，不是文档渲染或内容安全扫描。
+CWA HTTP 200、上传返回 location、书源成功下载都不等于 ready。EPUB 校验 ZIP 路径、重复/加密/符号链接条目、数量、展开大小、每条目 CRC、首条未压缩 mimetype、container、OPF 包结构与阅读顺序；PDF 校验头部和 EOF 标记。这是基础完整性验证，不是文档渲染或内容安全扫描。
 
-retry 对已提交任务仅延长核对窗口，不重新下载或提交。上传请求已发出但响应断开时保留提交意图。cancel 会中止本地传输和跟踪，已被 CWA 接收的书籍/转换不会撤销。MCP 调用取消不删除已创建的持久任务；客户端断开后是否继续运行由宿主是否保留子进程决定。
+retry 对已提交任务仅延长核对窗口，不重新下载或提交。提交前的输入文件丢失时，retry 恢复为 awaiting_upload（本地）或 queued（书源）。同一书籍已有未确认提交时，新任务返回 RELATED_SUBMISSION_PENDING 与 waiting_for，处理关联任务后再重试。上传请求已发出但响应断开时保留提交意图。cancel 会中止本地传输和跟踪，已被 CWA 接收的书籍/转换不会撤销。MCP 调用取消不删除已创建的持久任务；客户端断开后是否继续运行由宿主是否保留子进程决定。
 
 ## 文件接口
 

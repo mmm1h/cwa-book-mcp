@@ -39,7 +39,7 @@ export function createMcp(app: App): McpServer {
     'acquire_book',
     {
       description:
-        'start 用 request_id、candidate_id、required_format 创建持久任务。retry 只核对已提交任务，不重新上传。resolve 用 task_id/candidate_id 选择匹配。cancel 不删除 CWA 记录。用 get_task 查询结果。',
+        'start 用 request_id、candidate_id、required_format 创建持久任务。retry 只核对已提交任务，不重新上传。resolve 用 task_id/candidate_id 明确选择 CWA 匹配，提交后的元数据差异可通过重新搜索再选择解决，语言仍须一致。cancel 不删除 CWA 记录。',
       inputSchema: acquireSchema,
       outputSchema: output,
       annotations: {
@@ -71,7 +71,7 @@ export function createMcp(app: App): McpServer {
     'get_task',
     {
       description:
-        '查询持久任务状态。只有 ready 表示已从 CWA 验证目标格式文件；needs_review 时从 choices 中 resolve，或在修复后 retry 核对。',
+        '查询持久任务状态。只有 ready 表示已从 CWA 验证目标格式文件；needs_review 时选择 choices，已提交任务也可重新搜索 CWA 后 resolve。blocked 且有 waiting_for 时先处理关联任务；修复后用 retry 核对。',
       inputSchema: z.object({ task_id: z.string().uuid() }).strict(),
       outputSchema: output,
       annotations: { readOnlyHint: true, openWorldHint: false },

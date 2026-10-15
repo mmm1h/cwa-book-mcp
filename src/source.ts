@@ -181,22 +181,24 @@ export class Source {
   }
   private async auth(signal?: AbortSignal, force = false): Promise<void> {
     if (this.authenticating) return this.authenticating;
-    if (!this.loaded && !this.session && this.config.sourceEmail) {
-      this.loaded = true;
-      try {
-        const text = await readFile(join(this.config.stateDir, 'source-session.json'), 'utf8');
-        if (text.length <= 16384) {
-          const cached = z
-            .object({ fingerprint: z.string(), ...credentials.shape })
-            .parse(JSON.parse(text));
-          if (cached.fingerprint === this.fingerprint()) this.session = cached;
-        }
-      } catch {
-        /* Missing or unusable cache can be replaced through authenticated login. */
-      }
-    }
     if (this.session && !force) return;
-    this.authenticating = this.login(signal);
+    this.authenticating = (async () => {
+      if (!this.loaded && !this.session && this.config.sourceEmail) {
+        this.loaded = true;
+        try {
+          const text = await readFile(join(this.config.stateDir, 'source-session.json'), 'utf8');
+          if (text.length <= 16384) {
+            const cached = z
+              .object({ fingerprint: z.string(), ...credentials.shape })
+              .parse(JSON.parse(text));
+            if (cached.fingerprint === this.fingerprint()) this.session = cached;
+          }
+        } catch {
+          /* Missing or unusable cache can be replaced through authenticated login. */
+        }
+      }
+      if (!this.session || force) await this.login(signal);
+    })();
     try {
       await this.authenticating;
     } finally {
@@ -209,12 +211,13 @@ export class Source {
     signal?: AbortSignal,
   ): Promise<Record<string, unknown>> {
     await this.auth(signal);
+    const attemptedSession = this.session;
     try {
       return await this.raw(path, data, signal);
     } catch (error) {
       if (!(error instanceof AppError) || error.code !== 'AUTH_EXPIRED' || !this.config.sourceEmail)
         throw error;
-      await this.auth(signal, true);
+      if (!this.session || this.session === attemptedSession) await this.auth(signal, true);
       return this.raw(path, data, signal);
     }
   }

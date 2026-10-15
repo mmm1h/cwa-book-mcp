@@ -172,6 +172,22 @@ test('same-origin RPC login fallback and existing remix credentials', async () =
   await expect(session.search('合成测试书')).rejects.toMatchObject({ code: 'AUTH_EXPIRED' });
   expect(fixture.state.login).toBe(1);
 });
+test('concurrent cold requests share one login and concurrent expiry shares reauthentication', async () => {
+  const fixture = await sourceFixture();
+  const temp = await testConfig('http://localhost', {
+    ZLIBRARY_BASE_URL: fixture.url,
+    ZLIBRARY_EMAIL: 'test@example.invalid',
+    ZLIBRARY_PASSWORD: 'private-password',
+  });
+  cleanups.push(temp.cleanup);
+  const source = new Source(temp.config);
+  cleanups.push(() => source.close());
+  await Promise.all(Array.from({ length: 6 }, () => source.search('合成测试书')));
+  expect(fixture.state.login).toBe(1);
+  fixture.state.expired = true;
+  await Promise.all(Array.from({ length: 6 }, () => source.search('合成测试书')));
+  expect(fixture.state.login).toBe(2);
+});
 test('source acquisition verifies CWA after ingestion and skips source transfer for library reuse', async () => {
   const fixture = await sourceFixture(),
     cwa = await mockCwa();
