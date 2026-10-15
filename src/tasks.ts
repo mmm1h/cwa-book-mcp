@@ -1,4 +1,5 @@
 import { Readable } from 'node:stream';
+import { existsSync } from 'node:fs';
 import { z } from 'zod';
 import {
   bookSchema,
@@ -131,6 +132,8 @@ export class Tasks {
         fail('INVALID_STATE', '只有受阻、待核对或失败任务可以重试');
       if (t.kind === 'upload' || t.book.origin !== 'cwa') this.writeAllowed();
       t = this.store.mutate(t.id, (current) => {
+        if (!current.submitted_at && !existsSync(this.files.path(current.id)))
+          current.staged_sha256 = undefined;
         current.state = current.submitted_at
           ? 'reconciling'
           : current.staged_sha256
@@ -145,11 +148,11 @@ export class Tasks {
       });
     } else {
       if (!input.candidate_id || t.state !== 'needs_review')
-        fail('INVALID_STATE', 'resolve 需要 needs_review 任务与所列 CWA 候选');
+        fail('INVALID_STATE', 'resolve 需要 needs_review 任务与 CWA 候选');
       const book = this.catalog.candidate(input.candidate_id);
       if (
         book.origin !== 'cwa' ||
-        !t.choices?.some((b) => b.id === book.id && b.uuid === book.uuid) ||
+        (!t.submitted_at && !t.choices?.some((b) => b.id === book.id && b.uuid === book.uuid)) ||
         (language(t.book.language) !== 'unknown' &&
           language(book.language) !== language(t.book.language))
       )
@@ -158,6 +161,7 @@ export class Tasks {
         current.cwa = book;
         current.state = 'verifying';
         current.error = undefined;
+        current.waiting_for = undefined;
         current.next_run_at = Date.now();
         current.deadline = Date.now() + this.config.confirmMs;
       });

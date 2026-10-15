@@ -113,6 +113,28 @@ describe('book workflow', () => {
     app.tasks.acquire(acquireSchema.parse({ action: 'retry', task_id: t.id }));
     expect((await settle(app, t.id)).state).toBe('needs_review');
     expect(mock.state.uploads).toBe(1);
+    const manuallyFound = app.catalog.expose(mock.state.books[0]!);
+    app.tasks.acquire(
+      acquireSchema.parse({
+        action: 'resolve',
+        task_id: t.id,
+        candidate_id: manuallyFound.candidate_id,
+      }),
+    );
+    expect((await settle(app, t.id)).state).toBe('ready');
+    expect(mock.state.uploads).toBe(1);
+  });
+  test('missing input before submission can be uploaded again after retry', async () => {
+    const { app, mock } = await setup();
+    const task = prepare(app);
+    await app.tasks.receive(task.id, Readable.from(epub), epub.length);
+    await app.files.remove(task.id);
+    expect((await settle(app, task.id)).error?.code).toBe('INPUT_MISSING');
+    app.tasks.acquire(acquireSchema.parse({ action: 'retry', task_id: task.id }));
+    expect(app.store.get(task.id).state).toBe('awaiting_upload');
+    await app.tasks.receive(task.id, Readable.from(epub), epub.length);
+    expect((await settle(app, task.id)).state).toBe('ready');
+    expect(mock.state.uploads).toBe(1);
   });
   test('existing library book is reused; multiple matches require explicit resolve', async () => {
     const { app, mock } = await setup();
