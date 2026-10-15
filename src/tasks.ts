@@ -139,6 +139,7 @@ export class Tasks {
               ? 'awaiting_upload'
               : 'queued';
         current.error = undefined;
+        current.waiting_for = undefined;
         current.next_run_at = Date.now();
         current.deadline = Date.now() + this.config.confirmMs;
       });
@@ -431,6 +432,7 @@ export class Tasks {
         if (current.state === 'cancelled') return;
         current.cwa = verified.book;
         current.verification = { ...verified.info, at: Date.now() };
+        current.waiting_for = undefined;
         current.state = 'ready';
         current.error = undefined;
         current.choices = undefined;
@@ -483,6 +485,28 @@ export class Tasks {
       return;
     }
     this.writeAllowed();
+    const pending = this.store
+      .all()
+      .find(
+        (other) =>
+          other.id !== t.id &&
+          other.submitted_at &&
+          !terminal(other) &&
+          (sameBook(t.book, other.book) || sameBook(other.book, t.book)),
+      );
+    if (pending) {
+      this.store.mutate(t.id, (current) => {
+        if (current.state === 'cancelled') return;
+        current.state = 'blocked';
+        current.waiting_for = pending.id;
+        current.error = {
+          code: 'RELATED_SUBMISSION_PENDING',
+          message: '同一书籍已有未确认提交，先处理 waiting_for 任务，再重试核对',
+          retryable: true,
+        };
+      });
+      return;
+    }
     if (!t.staged_sha256) {
       if (t.kind === 'upload') fail('INPUT_MISSING', '暂存文件缺失，请重新上传');
       const sourceFormat = formatSchema.parse(t.book.formats[0]);

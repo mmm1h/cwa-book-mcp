@@ -9,7 +9,7 @@ import { Files, validateFile } from '../src/files.js';
 import { Tickets } from '../src/gateway.js';
 import { Catalog } from '../src/catalog.js';
 import { AppError, searchSchema } from '../src/domain.js';
-import { book, epub, pdf, testConfig } from './fixtures.js';
+import { book, epub, pdf, testConfig, storedZip } from './fixtures.js';
 
 const cleanups: (() => Promise<unknown> | void)[] = [];
 afterEach(async () => {
@@ -101,6 +101,26 @@ test('tickets bind expiry and signature', () => {
   expect(tickets.verify(token)).toEqual(value);
   expect(() => tickets.verify(tickets.sign({ ...value, expires: 1 }))).toThrow('过期');
   expect(() => new Tickets(Buffer.alloc(32, 2)).verify(token)).toThrow('无效');
+});
+test('a CRC-valid ZIP with a fake or malformed EPUB package is rejected', async () => {
+  const temp = await testConfig('http://localhost');
+  cleanups.push(temp.cleanup);
+  const files = new Files(join(temp.config.stateDir, 'files'), 1024 * 1024, 10 * 1024 * 1024);
+  await files.init();
+  for (const opf of [
+    '<not-package/>',
+    '<package xmlns="http://www.idpf.org/2007/opf"><manifest><item id="one"/></manifest><spine><itemref idref="missing"/></spine></package>',
+  ]) {
+    const data = storedZip({
+      mimetype: 'application/epub+zip',
+      'META-INF/container.xml':
+        '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>',
+      'book.opf': opf,
+    });
+    await expect(files.save('fake', Readable.from(data), 'epub')).rejects.toMatchObject({
+      code: 'FILE_INVALID',
+    });
+  }
 });
 test('Chinese tier priority, bounded pagination, cursor binding and failures never fall through', async () => {
   const temp = await testConfig('http://localhost');

@@ -71,7 +71,7 @@ export async function validateFile(
     await new Promise<void>((resolve, reject) => {
       yauzl.open(
         path,
-        { lazyEntries: true, validateEntrySizes: true, strictFileNames: true },
+        { lazyEntries: true, autoClose: false, validateEntrySizes: true, strictFileNames: true },
         (error, zip) => {
           if (error || !zip) return reject(new AppError('FILE_INVALID', 'EPUB ZIP 无效'));
           let expanded = 0,
@@ -80,6 +80,7 @@ export async function validateFile(
             container = false,
             rootfile = '';
           const names = new Set<string>();
+          const zipEntries = new Map<string, Entry>();
           const abort = () => {
             zip.close();
             reject(new AppError('CANCELLED', '文件验证已取消'));
@@ -95,11 +96,58 @@ export async function validateFile(
           };
           zip.on('error', bad);
           zip.on('end', () => {
-            cleanup();
             if (!mimetype || !container || !rootfile || !names.has(rootfile))
-              return reject(new AppError('FILE_INVALID', 'EPUB 缺少 mimetype、container 或包文件'));
-            resolve();
+              return bad(new AppError('FILE_INVALID', 'EPUB 缺少 mimetype、container 或包文件'));
+            void checkPackage().then(() => {
+              cleanup();
+              zip.close();
+              resolve();
+            }, bad);
           });
+          async function checkPackage(): Promise<void> {
+            signal?.throwIfAborted();
+            const entry = zipEntries.get(rootfile)!;
+            if (entry.uncompressedSize > 4 * 1024 * 1024)
+              fail('FILE_INVALID', 'EPUB 包描述文件过大');
+            const stream = await new Promise<Readable>((ok, no) =>
+              zip.openReadStream(entry, (e, s) => (e || !s ? no(e) : ok(s))),
+            );
+            const stop = () => stream.destroy(new AppError('CANCELLED', '验证已取消'));
+            signal?.addEventListener('abort', stop, { once: true });
+            const chunks: Buffer[] = [];
+            try {
+              for await (const chunk of stream) {
+                signal?.throwIfAborted();
+                chunks.push(Buffer.from(chunk));
+              }
+            } finally {
+              signal?.removeEventListener('abort', stop);
+              stream.destroy();
+            }
+            const parser = new SaxesParser({ xmlns: true });
+            let depth = 0,
+              isPackage = false;
+            const items = new Set<string>(),
+              spine: string[] = [];
+            parser.on('doctype', () => fail('FILE_INVALID', 'EPUB 不允许 DTD'));
+            parser.on('opentag', (tag) => {
+              depth++;
+              if (depth > 32) fail('FILE_INVALID', 'EPUB 包描述层级过深');
+              if (depth === 1)
+                isPackage = tag.local === 'package' && tag.uri === 'http://www.idpf.org/2007/opf';
+              if (tag.uri === 'http://www.idpf.org/2007/opf') {
+                if (tag.local === 'item' && tag.attributes.id?.value)
+                  items.add(tag.attributes.id.value);
+                if (tag.local === 'itemref') spine.push(tag.attributes.idref?.value || '');
+              }
+            });
+            parser.on('closetag', () => {
+              depth--;
+            });
+            parser.write(Buffer.concat(chunks).toString('utf8')).close();
+            if (!isPackage || !items.size || !spine.length || spine.some((ref) => !items.has(ref)))
+              fail('FILE_INVALID', 'EPUB 包描述或阅读顺序无效');
+          }
           async function check(entry: Entry): Promise<void> {
             signal?.throwIfAborted();
             entries++;
@@ -116,6 +164,7 @@ export async function validateFile(
             )
               fail('FILE_INVALID', 'EPUB 包含不安全或重复条目');
             names.add(name);
+            zipEntries.set(name, entry);
             expanded += entry.uncompressedSize;
             if (expanded > Math.min(max * 4, 8 * 1024 ** 3))
               fail('FILE_TOO_LARGE', 'EPUB 展开大小超过上限');
@@ -150,7 +199,8 @@ export async function validateFile(
             if (name === 'mimetype') {
               mimetype =
                 Buffer.concat(chunks).toString('utf8') === 'application/epub+zip' &&
-                entry.compressionMethod === 0;
+                entry.compressionMethod === 0 &&
+                entries === 1;
             }
             if (name === 'META-INF/container.xml') {
               const parser = new SaxesParser({ xmlns: true });

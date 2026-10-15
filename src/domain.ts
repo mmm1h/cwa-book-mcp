@@ -133,6 +133,7 @@ export interface Task {
   expected_sha256?: string;
   staged_sha256?: string;
   submitted_at?: number;
+  waiting_for?: string;
   deadline?: number;
   cwa?: Book;
   choices?: Book[];

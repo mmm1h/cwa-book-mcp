@@ -40,6 +40,21 @@ async function settle(app: App, taskId: string) {
   return app.store.get(taskId);
 }
 describe('book workflow', () => {
+  test('different request IDs cannot duplicate a pending submission for the same book', async () => {
+    const { app, mock } = await setup();
+    mock.state.dropUpload = true;
+    mock.state.nextBook = book({ title: 'not yet indexed' });
+    const first = prepare(app, 'first'),
+      second = prepare(app, 'second');
+    await app.tasks.receive(first.id, Readable.from(epub), epub.length);
+    await app.tasks.receive(second.id, Readable.from(epub), epub.length);
+    await until(() => app.store.get(first.id).submitted_at !== undefined);
+    const blocked = await settle(app, second.id);
+    expect(blocked.state).toBe('blocked');
+    expect(blocked.error?.code).toBe('RELATED_SUBMISSION_PENDING');
+    expect(blocked.waiting_for).toBe(first.id);
+    expect(mock.state.uploads).toBe(1);
+  });
   test('HTTP upload → CWA CSRF multipart → verified ready → signed download; repeated upload is idempotent', async () => {
     const { app, mock } = await setup();
     const t = prepare(app);

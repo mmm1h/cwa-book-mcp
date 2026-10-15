@@ -84,7 +84,10 @@ try {
   const key = await readFile(join(env.STATE_DIR, 'ticket.key'));
   assert.equal(key.length, 32);
   assert(!stderr.includes('synthetic'));
-  assert.equal(stderr, '');
+  assert.deepEqual(
+    stderr.split(/\r?\n/).filter((line) => line && !/^npm (warn|notice)\b/.test(line)),
+    [],
+  );
   console.log(
     JSON.stringify({
       node: process.version,

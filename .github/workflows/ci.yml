@@ -87,7 +87,7 @@ jobs:
       - name: MCPHub shared child and CLI health
         run: |
           export MCPHUB_ENTRY="$PWD/.work/clients/node_modules/@samanhappy/mcphub/dist/index.js"
-          export CLAUDE_CLI_PATH="$PWD/.work/clients/node_modules/@anthropic-ai/claude-code/cli.js"
+          export CLAUDE_CLI_PATH="$PWD/.work/clients/node_modules/@anthropic-ai/claude-code-linux-x64/claude"
           npm run test:clients
   resources:
     strategy:

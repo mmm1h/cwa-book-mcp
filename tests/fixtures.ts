@@ -5,6 +5,49 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { loadConfig } from '../src/config.js';
 import type { Book } from '../src/domain.js';
+import CRC32 from 'crc-32';
+
+export function storedZip(entries: Record<string, string>): Buffer {
+  const local: Buffer[] = [],
+    central: Buffer[] = [];
+  let offset = 0;
+  for (const [path, text] of Object.entries(entries)) {
+    const name = Buffer.from(path),
+      data = Buffer.from(text),
+      crc = CRC32.buf(data) >>> 0;
+    const head = Buffer.alloc(30);
+    head.writeUInt32LE(0x04034b50);
+    head.writeUInt16LE(20, 4);
+    head.writeUInt16LE(0x800, 6);
+    head.writeUInt32LE(crc, 14);
+    head.writeUInt32LE(data.length, 18);
+    head.writeUInt32LE(data.length, 22);
+    head.writeUInt16LE(name.length, 26);
+    const dir = Buffer.alloc(46);
+    dir.writeUInt32LE(0x02014b50);
+    dir.writeUInt16LE(20, 4);
+    dir.writeUInt16LE(20, 6);
+    dir.writeUInt16LE(0x800, 8);
+    dir.writeUInt32LE(crc, 16);
+    dir.writeUInt32LE(data.length, 20);
+    dir.writeUInt32LE(data.length, 24);
+    dir.writeUInt16LE(name.length, 28);
+    dir.writeUInt32LE(offset, 42);
+    local.push(head, name, data);
+    central.push(dir, name);
+    offset += head.length + name.length + data.length;
+  }
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50);
+  end.writeUInt16LE(Object.keys(entries).length, 8);
+  end.writeUInt16LE(Object.keys(entries).length, 10);
+  end.writeUInt32LE(
+    central.reduce((n, b) => n + b.length, 0),
+    12,
+  );
+  end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...local, ...central, end]);
+}
 
 export const epub = await readFile(new URL('../testdata/synthetic.epub', import.meta.url));
 export const pdf = await readFile(new URL('../testdata/synthetic.pdf', import.meta.url));
