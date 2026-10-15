@@ -38,5 +38,6 @@ jobs:
       - name: Public registry smoke
         run: |
           package_version=$(node -p "require('./package.json').version")
-          cd "$RUNNER_TEMP"
-          npm exec --yes --ignore-scripts --cache "$RUNNER_TEMP/published-cache" --package "cwa-book-mcp@$package_version" -- cwa-book-mcp --version
+          package_name=$(node -p "require('./package.json').name")
+          export PUBLISHED_PACKAGE_SPEC="$package_name@$package_version"
+          npm run test:package

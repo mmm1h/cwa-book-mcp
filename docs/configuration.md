@@ -70,6 +70,6 @@ EOF、SIGINT、SIGTERM 会关闭本进程。重启后核对已提交任务、恢
 
 当前未发布。维护者首次需要 `npm login`，包名 cwa-book-mcp 尚未预留；冲突时改为维护者 scope，并同步示例。先发布 next 通道并从公共 registry 验证，再推广稳定版本。若同一 0.1.0 已发布到 next，使用 `npm dist-tag add cwa-book-mcp@0.1.0 latest` 推广，不能覆盖同版本包。
 
-首次发布后在 npm 为本仓库的 publish.yml 配置 GitHub Actions trusted publisher，并建立 npm environment。后续手动工作流使用 OIDC/provenance，发布前要求当前提交的完整 acceptance 工作流成功，不保存长期 npm 令牌。真实书源和目标部署的剩余验收仍须按 [validation](validation.md) 完成。
+首次发布后在 npm 为本仓库的 publish.yml 配置 GitHub Actions trusted publisher，并建立 npm environment。后续手动工作流使用 OIDC/provenance，发布前要求当前提交的完整 acceptance 工作流成功，不保存长期 npm 令牌。发布后以 `PUBLISHED_PACKAGE_SPEC=cwa-book-mcp@0.1.0` 运行 `npm run test:package`，核对公共包 integrity 与本地产物一致，再验证空缓存安装、五工具发现/调用及重启。真实书源和目标部署的剩余验收仍须按 [validation](validation.md) 完成。
 
 参考：[npm trusted publishers](https://docs.npmjs.com/trusted-publishers)、[npm shrinkwrap](https://docs.npmjs.com/cli/v11/configuring-npm/npm-shrinkwrap-json)、[MCPHub 配置](https://docs.mcphub.app/configuration/mcp-settings)、[VS Code MCP](https://code.visualstudio.com/docs/copilot/customization/mcp-servers)。

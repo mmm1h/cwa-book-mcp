@@ -48,7 +48,39 @@ try {
   assert(!files.some((f) => /^(src|tests|testdata|\.work|\.tools|node_modules)\//.test(f)));
   assert(!files.some((f) => /\.go$|\.exe$|\.tar\.gz$|sqlite|ticket\.key|\.env$/.test(f)));
   const tarball = resolve(temp, packed.filename);
-  const args = [...base, '--package', tarball, '--', 'cwa-book-mcp'];
+  const published = process.env.PUBLISHED_PACKAGE_SPEC;
+  if (published) {
+    assert.equal(
+      published,
+      packed.name + '@' + packed.version,
+      'Public smoke must use this exact package/version',
+    );
+    const registry = JSON.parse(
+      (
+        await exec(
+          process.execPath,
+          [
+            npm,
+            'view',
+            published,
+            'dist.integrity',
+            '--json',
+            '--registry=https://registry.npmjs.org',
+          ],
+          { cwd },
+        )
+      ).stdout,
+    );
+    assert.equal(registry, packed.integrity, 'Published tarball differs from the checked artifact');
+  }
+  const args = [
+    ...base,
+    ...(published ? ['--registry=https://registry.npmjs.org'] : []),
+    '--package',
+    published || tarball,
+    '--',
+    'cwa-book-mcp',
+  ];
   const before = performance.now();
   const version = await exec(process.execPath, [npm, ...args, '--version'], {
     cwd,
@@ -98,6 +130,7 @@ try {
       files: files.length,
       integrity: packed.integrity,
       cold_install_ms: Math.round(coldMs),
+      distribution: published ? 'public_registry' : 'local_tarball',
       empty_cwd: true,
       empty_cache: true,
       install_scripts: false,
