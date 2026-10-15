@@ -238,7 +238,9 @@ export class Cwa {
         boundary +
         '\r\nContent-Disposition: form-data; name="btn-upload"; filename="book.' +
         format +
-        '"\r\nContent-Type: application/octet-stream\r\n\r\n',
+        '"\r\nContent-Type: ' +
+        (format === 'epub' ? 'application/epub+zip' : 'application/pdf') +
+        '\r\n\r\n',
     );
     const suffix = Buffer.from('\r\n--' + boundary + '--\r\n');
     const size = (await stat(path)).size;
@@ -272,7 +274,23 @@ export class Cwa {
       }
       if (!z.object({ location: z.string().min(1) }).safeParse(result).success)
         fail('UPLOAD_OUTCOME_UNKNOWN', 'CWA 提交响应不可确认，需要核对书库');
-    } catch {
+      // CWA also returns {location} when queueing fails. Its error is flashed to
+      // the same web session, so consume it before accepting the acknowledgement.
+      const feedback = await this.http.send('/me', { signal });
+      status(feedback, 'CWA');
+      const html = await textBody(feedback);
+      if (formInfo(html).login) fail('UPLOAD_OUTCOME_UNKNOWN', 'CWA 提交后会话失效，需要核对书库');
+      const $ = load(html);
+      const errors = $('.alert-danger, .alert-error');
+      if (errors.length)
+        fail(
+          'UPLOAD_OUTCOME_UNKNOWN',
+          /queue|排队/i.test(errors.text())
+            ? 'CWA 反馈上传排队失败；检查 CWA 日志，并核对书库'
+            : 'CWA 反馈上传处理失败；检查 CWA 日志，并核对书库',
+        );
+    } catch (error) {
+      if (error instanceof AppError && error.code === 'UPLOAD_OUTCOME_UNKNOWN') throw error;
       fail('UPLOAD_OUTCOME_UNKNOWN', 'CWA 提交可能已接收，需要核对书库');
     } finally {
       body.destroy();

@@ -97,6 +97,9 @@ export async function mockCwa() {
     downloadCount: 0,
     dropUpload: false,
     hangUpload: false,
+    rejectUpload: false,
+    acceptDespiteRejection: false,
+    uploadFeedbackShown: false,
     nextBook: book(),
     badFile: false,
     identityChanged: false,
@@ -194,10 +197,16 @@ export async function mockCwa() {
     const logged = req.headers.cookie?.includes('session=synthetic');
     if (u.pathname === '/me') {
       res.setHeader('content-type', 'text/html');
+      const feedback =
+        logged && state.rejectUpload && state.uploads > 0 && !state.uploadFeedbackShown
+          ? '<div class="alert alert-danger">上传任务未能成功排队等待处理: private server detail</div>'
+          : '';
+      if (feedback) state.uploadFeedbackShown = true;
       res.end(
-        logged
+        (logged
           ? '<input name="csrf_token" value="verified-token"><input name="password">'
-          : '<input name="username"><input name="password"><input name="csrf_token" value="login-token">',
+          : '<input name="username"><input name="password"><input name="csrf_token" value="login-token">') +
+          feedback,
       );
       return;
     }
@@ -239,7 +248,10 @@ export async function mockCwa() {
       state.uploads++;
       state.headers.push(req.headers);
       state.bodies.push(bytes);
-      if (!state.books.some((b) => b.uuid === state.nextBook.uuid))
+      if (
+        (!state.rejectUpload || state.acceptDespiteRejection) &&
+        !state.books.some((b) => b.uuid === state.nextBook.uuid)
+      )
         state.books.push(state.nextBook);
       if (state.dropUpload || state.hangUpload) {
         if (state.dropUpload) res.destroy();

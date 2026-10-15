@@ -58,6 +58,8 @@ CWA_USERNAME、CWA_PASSWORD 和四个 ZLIBRARY 认证变量均支持同名 `_FIL
 
 `cwa-book-mcp diagnose` 只读取 CWA 搜索接口，不创建状态、不写入 CWA、不登录书源；成功仅表示读取通路可用。默认 stdio 模式只在 stderr 输出脱敏错误。常见配置错误包含 CONFIG_REQUIRED、STATE_IN_USE、FILE_PORT_IN_USE、SQLITE_UNAVAILABLE。
 
+若 CWA 反馈上传排队失败，get_task 的 submission_error 会保留原因；即使 HTTP 200，也继续核对书库。检查 CWA 服务日志中的 `Failed to queue upload for ingest` 及目录权限等具体异常，不通过重复上传或自动改配置处理。
+
 EOF、SIGINT、SIGTERM 会关闭本进程。重启后核对已提交任务、恢复已完整落盘但尚未更新数据库的文件，并清理残片。上传结果未知的任务永不自动重新提交；retry 是继续核对。确认失败时检查 CWA，必要时由操作者取消并重新创建任务。
 
 固定端口且密钥未变时，重启后未过期票据仍有效。动态端口重启后须刷新链接。ticket.key 损坏或丢失会拒绝启动，不能静默生成新密钥。备份时先停进程，再备份整个状态目录；不在运行中只复制 tasks.sqlite。无旧 Go 状态迁移。

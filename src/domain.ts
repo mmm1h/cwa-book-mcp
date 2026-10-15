@@ -138,6 +138,7 @@ export interface Task {
   cwa?: Book;
   choices?: Book[];
   error?: PublicError;
+  submission_error?: PublicError;
   verification?: { sha256: string; size_bytes: number; at: number };
 }
 export const terminal = (t: Task): boolean => ['ready', 'failed', 'cancelled'].includes(t.state);

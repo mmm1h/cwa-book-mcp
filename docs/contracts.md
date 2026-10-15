@@ -35,6 +35,8 @@ search_books 返回 candidates、selected_tier、searched、partial、warnings�
 
 ready 表示 verification.at 时点的验证结果；下载仍重新核对，不能使用曾经成功的结果绕过 CWA 删除、身份改变或文件损坏。get_task 不自动发放下载地址。
 
+任务的可选 submission_error 保留提交时的脱敏错误，核对、retry 和重启后仍可查看。它是提交历史；最终是否 ready 仍以书库及实际文件验证为准。CWA 返回 HTTP 200 和 location 时也可能在会话中报告排队失败，不能据此自动重传。
+
 CWA HTTP 200、上传返回 location、书源成功下载都不等于 ready。EPUB 校验 ZIP 路径、重复/加密/符号链接条目、数量、展开大小、每条目 CRC、首条未压缩 mimetype、container、OPF 包结构与阅读顺序；PDF 校验头部和 EOF 标记。这是基础完整性验证，不是文档渲染或内容安全扫描。
 
 retry 对已提交任务仅延长核对窗口，不重新下载或提交。提交前的输入文件丢失时，retry 恢复为 awaiting_upload（本地）或 queued（书源）。同一书籍已有未确认提交时，新任务返回 RELATED_SUBMISSION_PENDING 与 waiting_for，处理关联任务后再重试。上传请求已发出但响应断开时保留提交意图。cancel 会中止本地传输和跟踪，已被 CWA 接收的书籍/转换不会撤销。MCP 调用取消不删除已创建的持久任务；客户端断开后是否继续运行由宿主是否保留子进程决定。

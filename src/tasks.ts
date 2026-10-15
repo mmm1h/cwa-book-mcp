@@ -549,7 +549,10 @@ export class Tasks {
       await this.cwa.upload(this.files.path(t.id), t.book.formats[0] as Format, token, signal);
     } catch (error) {
       this.store.mutate(t.id, (current) => {
-        if (current.state !== 'cancelled') current.error = publicError(error);
+        if (current.state !== 'cancelled') {
+          current.error = publicError(error);
+          current.submission_error = current.error;
+        }
       });
     }
     this.store.mutate(t.id, (current) => {

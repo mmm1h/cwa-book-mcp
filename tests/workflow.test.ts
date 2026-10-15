@@ -80,6 +80,9 @@ describe('book workflow', () => {
     expect((await put()).status).toBe(200);
     expect(mock.state.uploads).toBe(1);
     expect(Number(mock.state.headers[0]!['content-length'])).toBe(mock.state.bodies[0]!.length);
+    expect(mock.state.bodies[0]!.includes(Buffer.from('Content-Type: application/epub+zip'))).toBe(
+      true,
+    );
     const result = await app.gateway.downloadUrl(t.id);
     const get = await fetch(result.url as string);
     expect(get.status).toBe(200);
@@ -100,6 +103,36 @@ describe('book workflow', () => {
     const t = prepare(app);
     await app.tasks.receive(t.id, Readable.from(epub), epub.length);
     expect((await settle(app, t.id)).state).toBe('ready');
+    expect(mock.state.uploads).toBe(1);
+  });
+  test('HTTP 200 with a CWA queue error preserves safe feedback across reconciliation and retry', async () => {
+    const { app, mock } = await setup();
+    app.config.confirmMs = 80;
+    mock.state.rejectUpload = true;
+    const t = prepare(app);
+    await app.tasks.receive(t.id, Readable.from(epub), epub.length);
+    const reviewed = await settle(app, t.id);
+    expect(reviewed.state).toBe('needs_review');
+    expect(reviewed.error?.code).toBe('RECONCILIATION_REQUIRED');
+    expect(reviewed.submission_error).toMatchObject({
+      code: 'UPLOAD_OUTCOME_UNKNOWN',
+      message: 'CWA 反馈上传排队失败；检查 CWA 日志，并核对书库',
+    });
+    expect(JSON.stringify(app.tasks.get(t.id))).not.toContain('private server detail');
+    app.tasks.acquire(acquireSchema.parse({ action: 'retry', task_id: t.id }));
+    expect((await settle(app, t.id)).submission_error).toEqual(reviewed.submission_error);
+    expect(mock.state.uploads).toBe(1);
+  });
+  test('CWA queue error still reconciles an already ingested book without resubmitting', async () => {
+    const { app, mock } = await setup();
+    mock.state.rejectUpload = true;
+    mock.state.acceptDespiteRejection = true;
+    const t = prepare(app);
+    await app.tasks.receive(t.id, Readable.from(epub), epub.length);
+    const ready = await settle(app, t.id);
+    expect(ready.state).toBe('ready');
+    expect(ready.submission_error?.message).toContain('排队失败');
+    expect(ready.error).toBeUndefined();
     expect(mock.state.uploads).toBe(1);
   });
   test('unknown submission with no matching result remains reviewable; retry only reconciles', async () => {
