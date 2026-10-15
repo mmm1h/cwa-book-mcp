@@ -1,16 +1,90 @@
 import { Agent, request, type Dispatcher } from 'undici';
 import { CookieJar } from 'tough-cookie';
+import { lookup } from 'node:dns';
+import { BlockList, isIP, type LookupFunction } from 'node:net';
 import { fail, AppError } from './domain.js';
 import { VERSION } from './version.js';
 
 export type Response = Dispatcher.ResponseData;
+const blocked = new BlockList();
+for (const [address, prefix] of [
+  ['0.0.0.0', 8],
+  ['10.0.0.0', 8],
+  ['100.64.0.0', 10],
+  ['127.0.0.0', 8],
+  ['169.254.0.0', 16],
+  ['172.16.0.0', 12],
+  ['192.0.0.0', 24],
+  ['192.0.2.0', 24],
+  ['192.168.0.0', 16],
+  ['198.18.0.0', 15],
+  ['198.51.100.0', 24],
+  ['203.0.113.0', 24],
+  ['224.0.0.0', 4],
+  ['240.0.0.0', 4],
+] as const)
+  blocked.addSubnet(address, prefix, 'ipv4');
+const globalV6 = new BlockList();
+globalV6.addSubnet('2000::', 3, 'ipv6');
+const fakeDns = new BlockList();
+fakeDns.addSubnet('198.18.0.0', 15, 'ipv4');
+for (const [address, prefix] of [
+  ['2001::', 32],
+  ['2001:2::', 48],
+  ['2001:db8::', 32],
+  ['2002::', 16],
+] as const)
+  blocked.addSubnet(address, prefix, 'ipv6');
+export function publicAddress(address: string): boolean {
+  if (isIP(address) === 4) return !blocked.check(address, 'ipv4');
+  return isIP(address) === 6 && globalV6.check(address, 'ipv6') && !blocked.check(address, 'ipv6');
+}
+export function publicHttps(url: URL): boolean {
+  const host = url.hostname.replace(/^\[|\]$/g, '');
+  return (
+    url.protocol === 'https:' &&
+    !url.username &&
+    !url.password &&
+    !url.port &&
+    (isIP(host)
+      ? publicAddress(host)
+      : host.includes('.') && !/(^|\.)(localhost|local|internal|home|lan)\.?$/i.test(host))
+  );
+}
+const publicLookup: LookupFunction = (hostname, options, callback) => {
+  lookup(hostname, { ...options, all: true }, (error, addresses) => {
+    if (error) return callback(error, '');
+    // TUN proxies use this reserved range as synthetic DNS answers. Permit it
+    // only through hostname lookup; literal reserved/private URLs stay blocked,
+    // and HTTPS still verifies the original hostname's certificate.
+    if (
+      !addresses.length ||
+      addresses.some(
+        (a) =>
+          !publicAddress(a.address) && !fakeDns.check(a.address, a.family === 6 ? 'ipv6' : 'ipv4'),
+      )
+    )
+      return callback(
+        Object.assign(new Error('Public destination required'), { code: 'EACCES' }),
+        '',
+      );
+    if (options.all) callback(null, addresses);
+    else callback(null, addresses[0]!.address, addresses[0]!.family);
+  });
+};
 export class Http {
   readonly jar = new CookieJar();
   private agent = new Agent({ connections: 4, pipelining: 1, connect: { timeout: 15000 } });
+  private publicAgent = new Agent({
+    connections: 4,
+    pipelining: 1,
+    connect: { timeout: 10000, lookup: publicLookup },
+  });
   constructor(
     readonly base: string,
     readonly label: string,
     private timeoutMs: number,
+    private publicOnly = false,
   ) {}
   url(path: string): string {
     return path.startsWith('/') ? this.base + path : new URL(path, this.base + '/').href;
@@ -25,6 +99,7 @@ export class Http {
       allowedOrigins?: string[];
       timeoutMs?: number;
       cookies?: boolean;
+      publicOrigins?: boolean;
     } = {},
   ): Promise<Response> {
     let url = this.url(path);
@@ -38,13 +113,15 @@ export class Http {
     try {
       for (let redirect = 0; redirect <= 5; redirect++) {
         const u = new URL(url);
+        const unlisted = !allowed.has(u.origin);
         if (
           !['http:', 'https:'].includes(u.protocol) ||
           u.username ||
           u.password ||
-          !allowed.has(u.origin)
+          (unlisted && !(options.publicOrigins && publicHttps(u))) ||
+          (this.publicOnly && !publicHttps(u))
         )
-          fail('ORIGIN_BLOCKED', this.label + ' 请求来源不在精确允许列表');
+          fail('ORIGIN_BLOCKED', this.label + ' 请求目标未通过来源检查');
         if (u.origin !== origin) crossed = true;
         const headers: Record<string, string> = {
           'user-agent': 'cwa-book-mcp/' + VERSION,
@@ -67,7 +144,7 @@ export class Http {
           body,
           headers,
           signal,
-          dispatcher: this.agent,
+          dispatcher: this.publicOnly || unlisted ? this.publicAgent : this.agent,
           headersTimeout: 30000,
           bodyTimeout: 30000,
         });
@@ -100,11 +177,13 @@ export class Http {
       return fail('UPSTREAM_INVALID', this.label + ' 重定向次数过多');
     } catch (error) {
       if (error instanceof AppError) throw error;
+      if (error && typeof error === 'object' && 'code' in error && error.code === 'EACCES')
+        fail('ORIGIN_BLOCKED', this.label + ' 拒绝访问非公网目标');
       throw new AppError(this.label + '_UNAVAILABLE', this.label + ' 请求失败或超时', true);
     }
   }
   async close(): Promise<void> {
-    await this.agent.destroy();
+    await Promise.all([this.agent.destroy(), this.publicAgent.destroy()]);
   }
 }
 export function status(response: Response, label: string): void {

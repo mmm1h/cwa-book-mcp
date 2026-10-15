@@ -12,7 +12,8 @@ import {
   type Page,
 } from './domain.js';
 import { Http, jsonBody, status, textBody, type Response } from './http.js';
-import type { Config } from './config.js';
+import { sourceConfigured, type Config } from './config.js';
+import { SourceDomains } from './source-domains.js';
 
 const scalar = z.union([z.string(), z.number()]).transform(String);
 const credentials = z.object({ id: scalar, key: z.string().min(1).max(4096) });
@@ -50,27 +51,27 @@ function mapBook(raw: z.infer<typeof rawBook>): Book {
   });
 }
 export class Source {
-  readonly http?: Http;
+  private readonly domains: SourceDomains;
   private session?: Credentials;
   private authenticating?: Promise<void>;
   private loaded = false;
   constructor(readonly config: Config) {
-    if (config.sourceUrl) this.http = new Http(config.sourceUrl, 'SOURCE', config.metadataMs);
+    this.domains = new SourceDomains(config);
     if (config.sourceUserId && config.sourceUserKey)
       this.session = credentials.parse({ id: config.sourceUserId, key: config.sourceUserKey });
   }
   get configured(): boolean {
-    return !!this.http;
+    return sourceConfigured(this.config);
   }
   private fingerprint(): string {
-    return digest({ url: this.config.sourceUrl, email: this.config.sourceEmail });
+    return digest({ url: this.config.sourceUrl || 'auto', email: this.config.sourceEmail });
   }
   private async raw(
+    http: Http,
     path: string,
     data?: URLSearchParams,
     signal?: AbortSignal,
   ): Promise<Record<string, unknown>> {
-    if (!this.http) fail('SOURCE_NOT_CONFIGURED', '书源尚未配置');
     const headers: Record<string, string> = { accept: 'application/json' };
     if (data) headers['content-type'] = 'application/x-www-form-urlencoded';
     if (this.session) {
@@ -82,7 +83,7 @@ export class Source {
         '; remix_userkey=' +
         encodeURIComponent(this.session.key);
     }
-    const response = await this.http.send(path, {
+    const response = await http.send(path, {
       method: data ? 'POST' : 'GET',
       headers,
       body: data?.toString(),
@@ -94,7 +95,8 @@ export class Source {
       const text = await textBody(response);
       if (/captcha|cf-chl|challenge-platform/i.test(text))
         fail('CAPTCHA_REQUIRED', '书源需要人工验证');
-      fail('AUTH_EXPIRED', '书源返回登录页或非 API 响应');
+      if (this.config.sourceUrl) fail('AUTH_EXPIRED', '书源返回登录页或非 API 响应');
+      fail('SOURCE_UNAVAILABLE', '书源入口未返回 API 响应', true);
     }
     status(response, 'SOURCE');
     const parsed = envelope.safeParse(await jsonBody(response));
@@ -107,16 +109,17 @@ export class Source {
       if (/limit|quota/i.test(message)) fail('QUOTA_EXCEEDED', '书源额度不足', true);
       if (/authoriz|authentic|login|session|password|credentials/i.test(message))
         fail('AUTH_EXPIRED', '书源认证失效');
-      fail('SOURCE_UNAVAILABLE', '书源拒绝请求', true);
+      fail('SOURCE_REJECTED', '书源拒绝请求', true);
     }
     return result;
   }
-  private async login(signal?: AbortSignal): Promise<void> {
-    if (!this.config.sourceEmail || !this.config.sourcePassword || !this.http)
+  private async login(http: Http, signal?: AbortSignal): Promise<void> {
+    if (!this.config.sourceEmail || !this.config.sourcePassword)
       fail('AUTH_REQUIRED', '请配置书源邮箱/密码或已有会话');
     this.session = undefined;
     try {
       const result = await this.raw(
+        http,
         '/eapi/user/login',
         new URLSearchParams({
           email: this.config.sourceEmail,
@@ -137,19 +140,19 @@ export class Source {
       });
     } catch (error) {
       if (!(error instanceof AppError) || error.code !== 'AUTH_EXPIRED') throw error;
-      // Compatibility login only sends credentials to the explicitly configured origin.
-      const page = await this.http.send('/', { signal });
+      // The compatibility login stays on the selected, verified origin.
+      const page = await http.send('/', { signal });
       status(page, 'SOURCE');
       const html = await textBody(page);
       if (/cf-chl|challenge-platform|captcha/i.test(html))
         fail('CAPTCHA_REQUIRED', '书源登录需要人工验证');
       const hint = /loginDomain\s*[:=]\s*["']([^"']+)["']/.exec(html)?.[1];
-      const rpc = hint ? new URL(hint, this.http.base + '/') : new URL(this.http.url('/rpc.php'));
-      if (rpc.origin !== new URL(this.http.base).origin)
+      const rpc = hint ? new URL(hint, http.base + '/') : new URL(http.url('/rpc.php'));
+      if (rpc.origin !== new URL(http.base).origin)
         fail('ORIGIN_BLOCKED', '书源登录入口跨来源，请使用同源入口');
       if (!rpc.pathname.endsWith('.php'))
         rpc.pathname = rpc.pathname.replace(/\/$/, '') + '/rpc.php';
-      const response = await this.http.send(rpc.href, {
+      const response = await http.send(rpc.href, {
         method: 'POST',
         signal,
         headers: { 'content-type': 'application/x-www-form-urlencoded' },
@@ -168,13 +171,13 @@ export class Source {
       const body = await textBody(response);
       if (/captcha|challenge-platform/i.test(body))
         fail('CAPTCHA_REQUIRED', '书源登录需要人工验证');
-      const jar = await this.http.jar.getCookies(this.http.base + '/');
+      const jar = await http.jar.getCookies(http.base + '/');
       const mapped = Object.fromEntries(jar.map((c) => [c.key, c.value]));
       const parsed = credentials.safeParse({ id: mapped.remix_userid, key: mapped.remix_userkey });
       if (!parsed.success) fail('AUTH_EXPIRED', '书源登录未取得有效会话');
       this.session = parsed.data;
     }
-    await this.raw('/eapi/user/profile', undefined, signal);
+    await this.raw(http, '/eapi/user/profile', undefined, signal);
     const path = join(this.config.stateDir, 'source-session.json');
     await writeFile(
       path + '.part',
@@ -183,7 +186,7 @@ export class Source {
     );
     await rename(path + '.part', path);
   }
-  private async auth(signal?: AbortSignal, force = false): Promise<void> {
+  private async auth(http: Http, signal?: AbortSignal, force = false): Promise<void> {
     if (this.authenticating) return this.authenticating;
     if (this.session && !force) return;
     this.authenticating = (async () => {
@@ -195,13 +198,20 @@ export class Source {
             const cached = z
               .object({ fingerprint: z.string(), ...credentials.shape })
               .parse(JSON.parse(text));
-            if (cached.fingerprint === this.fingerprint()) this.session = cached;
+            const fingerprints = [this.fingerprint()];
+            if (!this.config.sourceUrl)
+              fingerprints.push(
+                ...this.domains.origins.map((url) =>
+                  digest({ url, email: this.config.sourceEmail }),
+                ),
+              );
+            if (fingerprints.includes(cached.fingerprint)) this.session = cached;
           }
         } catch {
           /* Missing or unusable cache can be replaced through authenticated login. */
         }
       }
-      if (!this.session || force) await this.login(signal);
+      if (!this.session || force) await this.login(http, signal);
     })();
     try {
       await this.authenticating;
@@ -213,27 +223,50 @@ export class Source {
     path: string,
     data?: URLSearchParams,
     signal?: AbortSignal,
+  ): Promise<{ result: Record<string, unknown>; http: Http }> {
+    if (!this.configured) fail('SOURCE_NOT_CONFIGURED', '书源尚未配置');
+    // Search/detail requests are repeatable. A file-ticket response may already
+    // consume quota when lost, so a failed ticket request is never replayed.
+    const attempts = this.config.sourceUrl || path.endsWith('/file') ? 1 : 2;
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      const http = await this.domains.get(signal);
+      try {
+        return { result: await this.apiAt(http, path, data, signal), http };
+      } catch (error) {
+        if (!(error instanceof AppError) || error.code !== 'SOURCE_UNAVAILABLE' || signal?.aborted)
+          throw error;
+        this.domains.reject(http);
+        if (attempt + 1 === attempts) throw error;
+      }
+    }
+    return fail('SOURCE_UNAVAILABLE', '书源入口不可用', true);
+  }
+  private async apiAt(
+    http: Http,
+    path: string,
+    data?: URLSearchParams,
+    signal?: AbortSignal,
   ): Promise<Record<string, unknown>> {
-    await this.auth(signal);
+    await this.auth(http, signal);
     const attemptedSession = this.session;
     try {
-      return await this.raw(path, data, signal);
+      return await this.raw(http, path, data, signal);
     } catch (error) {
       if (!(error instanceof AppError) || error.code !== 'AUTH_EXPIRED' || !this.config.sourceEmail)
         throw error;
-      if (!this.session || this.session === attemptedSession) await this.auth(signal, true);
-      return this.raw(path, data, signal);
+      if (!this.session || this.session === attemptedSession) await this.auth(http, signal, true);
+      return this.raw(http, path, data, signal);
     }
   }
   async search(query: string, cursor?: string, signal?: AbortSignal): Promise<Page> {
-    if (!this.http) fail('SOURCE_NOT_CONFIGURED', '书源尚未配置');
+    if (!this.configured) fail('SOURCE_NOT_CONFIGURED', '书源尚未配置');
     const page = cursor ? Number(cursor) : 1;
     if (!Number.isSafeInteger(page) || page < 1 || page > 100000)
       fail('CURSOR_INVALID', '书源分页无效');
     const data = new URLSearchParams({ message: query, page: String(page), limit: '50' });
     data.append('extensions[]', 'epub');
     data.append('extensions[]', 'pdf');
-    const result = await this.api('/eapi/book/search', data, signal);
+    const { result } = await this.api('/eapi/book/search', data, signal);
     const list = z.array(rawBook).max(100).safeParse(result.books);
     if (!list.success) fail('UPSTREAM_INVALID', '书源候选格式不兼容');
     const pagination = z
@@ -251,10 +284,10 @@ export class Source {
     };
   }
   async open(known: Book, signal?: AbortSignal): Promise<Response> {
-    if (!this.http || !known.hash) fail('SOURCE_NOT_CONFIGURED', '书源入口或候选不完整');
+    if (!this.configured || !known.hash) fail('SOURCE_NOT_CONFIGURED', '书源入口或候选不完整');
     const path =
       '/eapi/book/' + encodeURIComponent(known.id) + '/' + encodeURIComponent(known.hash);
-    const result = await this.api(path, undefined, signal);
+    const { result } = await this.api(path, undefined, signal);
     const parsed = rawBook.safeParse(result.book);
     if (!parsed.success) fail('UPSTREAM_INVALID', '书源详情不兼容');
     const book = mapBook(parsed.data);
@@ -265,7 +298,7 @@ export class Source {
       book.formats[0] !== known.formats[0]
     )
       fail('SOURCE_CHANGED', '书源详情已变化，请重新搜索');
-    const link = await this.api(path + '/file', undefined, signal);
+    const { result: link, http } = await this.api(path + '/file', undefined, signal);
     const fields = z
       .object({
         file: z.object({ downloadLink: z.string().optional() }).optional(),
@@ -276,9 +309,10 @@ export class Source {
       .parse(link);
     const url = fields.file?.downloadLink || fields.downloadLink || fields.url || fields.link;
     if (!url) fail('QUOTA_EXCEEDED', '书源未提供下载地址，请检查额度');
-    const response = await this.http.send(new URL(url, this.http.base + '/').href, {
+    const response = await http.send(new URL(url, http.base + '/').href, {
       signal,
-      allowedOrigins: [new URL(this.http.base).origin, ...this.config.sourceOrigins],
+      allowedOrigins: [new URL(http.base).origin, ...this.config.sourceOrigins],
+      publicOrigins: true,
       timeoutMs: this.config.transferMs,
       cookies: false,
       headers: this.session
@@ -305,6 +339,6 @@ export class Source {
     return response;
   }
   async close(): Promise<void> {
-    await this.http?.close();
+    await this.domains.close();
   }
 }

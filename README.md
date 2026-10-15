@@ -24,6 +24,8 @@ Node.js + TypeScript，单进程，stdio MCP，npm 分发。推荐 Node.js 24 LT
 
 写入默认关闭。确认 CWA 上传权限、转换与重复处理设置后，再启用 CWA_WRITE_ENABLED=true。书源是可选配置；仅配置 CWA 即可搜索、读取书库。
 
+启用 Z-Library 只需在 env 中增加 `ZLIBRARY_EMAIL` 和 `ZLIBRARY_PASSWORD`，或使用已有会话 `ZLIBRARY_USER_ID` / `ZLIBRARY_USER_KEY`。程序自动更新、探测和切换入口，自动接受认证响应给出的公网 HTTPS 下载地址，无需维护域名或 CDN 列表。
+
 手机与网页客户端通过远端 MCPHub 使用此进程。远端文件链接还需设置 Agent 可达的 PUBLIC_BASE_URL。不同客户端的 JSON 外层格式不同，详见[配置与接入](docs/configuration.md)。
 
 五个工具：search_books、acquire_book、upload_book、get_task、get_download_url。文件通过短时授权 HTTP 链接传输，不经过 MCP 消息。

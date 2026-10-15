@@ -1,6 +1,6 @@
 # 当前实现验证
 
-以下仅为 Node.js/TypeScript 实现的证据，更新时间 2026-10-15。提交 [88e4dd6](https://github.com/mmm1h/cwa-book-mcp/commit/88e4dd61753905458d747dfed5bf2cebf577b197) 的 [Node acceptance](https://github.com/mmm1h/cwa-book-mcp/actions/runs/38685526062) 全部 20 项通过。之后的上传反馈与书源兼容修复已在本地通过 30 个测试及空缓存 tarball 验证，尚未重新运行完整平台 CI。npm 公开发布按用户要求暂缓。
+以下仅为 Node.js/TypeScript 实现的证据，更新时间 2026-10-15。提交 [88e4dd6](https://github.com/mmm1h/cwa-book-mcp/commit/88e4dd61753905458d747dfed5bf2cebf577b197) 的 [Node acceptance](https://github.com/mmm1h/cwa-book-mcp/actions/runs/38685526062) 全部 20 项通过。之后的上传反馈、书源兼容和自动域名维护已在本地通过 47 个测试及空缓存 tarball 验证，尚未重新运行完整平台 CI。npm 公开发布按用户要求暂缓。
 
 | 项目                                               | 实际结果                                                                                                  |
 | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
@@ -12,7 +12,7 @@
 | Claude Code 2.1.300                                | 隔离配置中的实际 npx tarball 健康检查为 Connected；未调用模型                                             |
 | 运行时依赖                                         | npm audit --omit=dev：0 漏洞；许可证已收集，shrinkwrap 纳入包内                                           |
 
-当前 30 个行为测试覆盖：四个 MCP 协议版本、真实 stdio 子进程、上传后强杀与恢复、响应丢失后的核对、重复请求及同书不同请求防重投、丢失输入恢复、人工匹配 CWA 记录、EPUB CRC/OPF 校验、票据与身份变化、跨源凭据隔离、书源会话/RPC/额度/验证码、可空与多值书号，以及并发登录只认证一次。
+当前 47 个行为测试覆盖：四个 MCP 协议版本、真实 stdio 子进程、上传后强杀与恢复、响应丢失后的核对、防重复提交、丢失输入恢复、人工匹配、EPUB CRC/OPF、票据与身份变化、书源会话/RPC/额度/验证码及书号兼容，以及自动域名维护、提前刷新、缓存/内置回退、旧会话复用、并发与取消隔离、公网 CDN 重定向和 DNS 私网阻断。
 
 原版 CWA 镜像 digest 为 `sha256:5e00373854247750cc3e4479b492ae09293ff5e06ed10177f226634d97888679`。本次 EPUB→EPUB 下载为 6841 字节，PDF→EPUB 为 43723 字节；SHA256、镜像与输出记录在该 CI 的 `original-cwa` artifact 中。测试未修改 CWA 源码或自动调整其设置。
 
@@ -27,17 +27,17 @@
 | 恢复与文件接口               | 重启后任务及幂等记录保留；错误票据 403、Range 416；验证文件已清理 |
 | 原创 EPUB 真实上传           | 未通过入库验收；提交后约 7 分钟进入 needs_review                  |
 
-CWA 的上传响应为 HTTP 200 和 location，但同一会话同时提示上传任务排队失败。只读检查确认允许 EPUB、目标格式为 EPUB、监控服务报告运行；这些信息仍不足以定位排队异常。尚需对应 CWA 服务日志，不能把排队失败推断为已经入库或确定未接收。
+CWA 的上传响应为 HTTP 200 和 location，但同一会话同时提示排队失败。用户随后将已校验的真实 EPUB 手动上传到网页，同样复现。用户提供的容器日志明确记录 chown 的 Operation not permitted，以及 `Failed to queue upload for ingest: Ingest directory not writable: /cwa-book-ingest`；已定位到入库目录不可写，具体挂载/UID/GID/ACL 由 NAS 端检查修复。应用日志为 stdout，网页日志接口不可读取。
 
-上游排查已核对 [v4.0.8 上传源码](https://github.com/crocodilestick/Calibre-Web-Automated/blob/3ce7bf80c8c66485eec7218c6b6c3fef8e6e6ba5/cps/editbooks.py)：账号无上传权限会返回 403，本次提示来自通过权限检查后的保存或排队异常。同类记录包括入库目录权限 [#603](https://github.com/crocodilestick/Calibre-Web-Automated/issues/603)、未挂载入库目录 [#995](https://github.com/crocodilestick/Calibre-Web-Automated/issues/995#issuecomment-3832106829)，以及文件名过长的未合并修复 [#1511](https://github.com/crocodilestick/Calibre-Web-Automated/pull/1511)。MCP 上传使用短文件名 `book.epub`；用户反馈网页上传正常，这些案例均不能直接证明目标实例根因。另有 v4.0.8 [#1569](https://github.com/crocodilestick/Calibre-Web-Automated/issues/1569) 报告入库时数据库锁定，但发生在文件已排队后的阶段，与本次提示不同。
+[v4.0.8 上传源码](https://github.com/crocodilestick/Calibre-Web-Automated/blob/3ce7bf80c8c66485eec7218c6b6c3fef8e6e6ba5/cps/editbooks.py) 与此错误位置一致。部署排查应验证实际应用身份的写入、重命名与目录权限；[NETWORK_SHARE_MODE 的上游说明](https://github.com/crocodilestick/Calibre-Web-Automated#-deploying-on-network-shares-nfssmb-) 同时涉及 chown、SQLite WAL 和监视方式，不能代替目录写权限。本机未修改目标部署设置，修复后的真实入库与下载仍待验收。
 
 已修复上传反馈遗漏：提交后读取同一会话的错误提示，保存脱敏 submission_error；核对与 retry 仍不重新提交。新增测试覆盖 HTTP 200 排队错误的保留，以及报错后实际已入库的安全核对。实际目标的未确认任务和原创测试文件保留在本机忽略目录或临时状态目录，未自动重传、删除书库记录或调整 CWA 配置。
 
 ## 真实书源下载验证
 
-2026-10-15，复用本项目的 Source 和 Files 模块，真实账号认证、会话复用、中文搜索、书籍详情核对及 EPUB 流式下载通过。文件为 174,397 字节，完成 ZIP/CRC、OPF 校验并记录 SHA-256；结果保存在本机忽略目录 `.work/live-zlibrary/download-results.json`。按用户要求，文件交给用户手动上传，没有创建 CWA 任务或提交入库；本项不替代完整 MCP 书源到 CWA 的验收。
+2026-10-15，复用本项目的 Source 和 Files 模块，真实账号认证、会话复用、中文搜索、书籍详情核对及 EPUB 流式下载通过。随后在未设置入口和下载 origin 允许列表的自动模式下复测：三个无凭据探测中选出可用入口，复用原有会话，从认证响应给出的独立 CDN 下载 174,397 字节 EPUB，通过 ZIP/CRC、OPF 校验并记录 SHA-256。本机 TUN 的 Fake-IP DNS 模式也实际通过。
 
-实测发现并修复可选书号为 null、多个书号组成长字符串导致整页搜索失败的问题；缺失字段保持未知，多值字段选取一个长度有效的标识。回归测试同时验证搜索和后续下载。实际文件使用书源返回的独立 CDN origin，通过精确允许列表接入；验证码、额度不足和其他部署入口仍需分别验证。
+本机忽略目录中的 `download-results.json` 和 `automatic-domain-results.json` 分别记录两次验证；自动模式没有固定入口或额外 CDN 配置。文件交给用户手动上传，没有创建 CWA 任务或提交入库；本项不替代完整 MCP 书源到 CWA 的验收。实测发现的可空、多值书号问题已有回归；入口故障切换、缓存/维护源失效和密码/额度/验证码边界由模拟测试验证，未把所有公开入口都描述为已实测登录。
 
 ## 资源观测
 
@@ -64,4 +64,4 @@ CI 定义位于 [.github/workflows/ci.yml](../.github/workflows/ci.yml)：12 个
 
 公共 npm 首次发布与公共 registry 的完整安装；当前 npm whoami 返回 ENEEDAUTH。产物与发布工作流已就绪，维护者登录后可先发布 next，随后配置 OIDC。
 
-目标 CWA 上传排队异常仍需定位并完成入库验收；MCPHub 网络、反代上传限制、远端 Agent 的 PUT/GET 能力，以及手机/网页到 Hub 的实际访问仍需验证。本机读取通过和隔离客户端兼容性不替代这些部署验收。
+目标 CWA 仍需在 NAS 端修复入库目录权限并完成入库验收；MCPHub 网络、反代上传限制、远端 Agent 的 PUT/GET 能力，以及手机/网页到 Hub 的实际访问仍需验证。本机读取通过和隔离客户端兼容性不替代这些部署验收。

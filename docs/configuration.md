@@ -16,33 +16,35 @@
 
 ## 环境变量
 
-| 变量                                | 默认值 / 用途                                                        |
-| ----------------------------------- | -------------------------------------------------------------------- |
-| CWA_BASE_URL                        | 必填；CWA 根 URL，可含反代子路径                                     |
-| CWA_USERNAME、CWA_PASSWORD          | 必填；具有 OPDS 读取权限的账号                                       |
-| CWA_WRITE_ENABLED                   | false；由操作者确认 CWA 设置后设 true                                |
-| STATE_DIR                           | 自动私有用户数据目录；必须为本地可持久化磁盘                         |
-| INSTANCE_ID                         | default；多个独立客户端使用不同值                                    |
-| FILE_HOST、FILE_PORT                | 127.0.0.1、0（动态端口）                                             |
-| PUBLIC_BASE_URL                     | 本机默认自动生成；远端 Agent 可达的文件入口 URL                      |
-| ZLIBRARY_BASE_URL                   | 未设置则关闭书源；由操作者提供可信同源入口                           |
-| ZLIBRARY_EMAIL、ZLIBRARY_PASSWORD   | 邮箱密码登录方式，须成对设置                                         |
-| ZLIBRARY_USER_ID、ZLIBRARY_USER_KEY | 已有 remix 会话方式，须成对设置；与邮箱方式互斥                      |
-| ZLIBRARY_FILE_ORIGINS               | 额外下载 origin 的逗号列表，如 https://example.invalid；不支持通配符 |
-| MAX_FILE_BYTES                      | 2147483648（2 GiB），范围 1 KiB–16 GiB                               |
-| MAX_STAGING_BYTES                   | 8589934592（8 GiB），包括暂存与验证文件、并发预留                    |
-| TRANSFER_TIMEOUT_SECONDS            | 1800，整个文件传输截止时间；单次无数据等待另限 30 秒                 |
-| METADATA_TIMEOUT_SECONDS            | 30，单次元数据请求截止时间                                           |
-| CONFIRM_TIMEOUT_SECONDS             | 600，提交后等待 CWA 的核对窗口                                       |
-| POLL_INTERVAL_SECONDS               | 5，后台核对间隔                                                      |
-| TICKET_TTL_SECONDS                  | 900，上传/下载授权有效期                                             |
-| RETENTION_DAYS                      | 30，完成任务与幂等记录保留期；未提交旧任务过期                       |
+| 变量                                | 默认值 / 用途                                             |
+| ----------------------------------- | --------------------------------------------------------- |
+| CWA_BASE_URL                        | 必填；CWA 根 URL，可含反代子路径                          |
+| CWA_USERNAME、CWA_PASSWORD          | 必填；具有 OPDS 读取权限的账号                            |
+| CWA_WRITE_ENABLED                   | false；由操作者确认 CWA 设置后设 true                     |
+| STATE_DIR                           | 自动私有用户数据目录；必须为本地可持久化磁盘              |
+| INSTANCE_ID                         | default；多个独立客户端使用不同值                         |
+| FILE_HOST、FILE_PORT                | 127.0.0.1、0（动态端口）                                  |
+| PUBLIC_BASE_URL                     | 本机默认自动生成；远端 Agent 可达的文件入口 URL           |
+| ZLIBRARY_BASE_URL                   | 可选固定入口；省略时根据已配置的书源认证自动发现与切换    |
+| ZLIBRARY_EMAIL、ZLIBRARY_PASSWORD   | 邮箱密码登录方式，须成对设置                              |
+| ZLIBRARY_USER_ID、ZLIBRARY_USER_KEY | 已有 remix 会话方式，须成对设置；与邮箱方式互斥           |
+| ZLIBRARY_FILE_ORIGINS               | 特殊部署的额外精确 origin，逗号分隔；普通公网下载无需配置 |
+| MAX_FILE_BYTES                      | 2147483648（2 GiB），范围 1 KiB–16 GiB                    |
+| MAX_STAGING_BYTES                   | 8589934592（8 GiB），包括暂存与验证文件、并发预留         |
+| TRANSFER_TIMEOUT_SECONDS            | 1800，整个文件传输截止时间；单次无数据等待另限 30 秒      |
+| METADATA_TIMEOUT_SECONDS            | 30，单次元数据请求截止时间                                |
+| CONFIRM_TIMEOUT_SECONDS             | 600，提交后等待 CWA 的核对窗口                            |
+| POLL_INTERVAL_SECONDS               | 5，后台核对间隔                                           |
+| TICKET_TTL_SECONDS                  | 900，上传/下载授权有效期                                  |
+| RETENTION_DAYS                      | 30，完成任务与幂等记录保留期；未提交旧任务过期            |
 
 CWA_USERNAME、CWA_PASSWORD 和四个 ZLIBRARY 认证变量均支持同名 `_FILE`。文件为 UTF-8 文本，移除末尾换行；同一变量与其 _FILE 不能同时提供。只在运行环境保存凭据。日志不会输出凭据、书源下载地址或授权票据。
 
-书源自动缓存已验证的会话，不保存密码。认证失效只尝试一次重新登录；CAPTCHA、额度限制和不兼容响应明确返回错误。跨源文件请求必须在精确允许列表内，且不转发 Cookie、Authorization、remix 或自定义认证头。
+只配置完整的一组书源认证即可启用；未配置认证与入口时关闭书源。首次使用自动读取 [heartleo/zlib 的维护清单](https://github.com/heartleo/zlib/blob/main/domain_policy.go)，通过无凭据的 `/eapi/info/domains` 探测选取可用入口，并接纳受信任入口公布的后续域名。清单每天按需刷新，入口失效时可提前刷新（失败后至少间隔五分钟）；维护源不可用时回退缓存与内置入口。不会抓取导航页中的任意链接作为登录目标。设置 ZLIBRARY_BASE_URL 可固定到自选入口，此时不自动切换。
 
-书源适配参考 [heartleo/zlib](https://github.com/heartleo/zlib) 的 EAPI/RPC 协议，在本项目内用 TypeScript 实现，仍需配置入口和账号或有效会话。入口可参考其 [实测域名清单](https://github.com/heartleo/zlib/blob/main/README.zh.md#推荐访问域名) 和社区维护的 [Awesome-Zlibrary](https://github.com/dongyubin/Awesome-Zlibrary)。先用不带凭据的 `/eapi/info/domains` 检查候选，再设置 ZLIBRARY_BASE_URL；域名列表可达不代表登录和下载通过。当前不会自动切换书源域名或把凭据提交给网址发布页。
+书源适配在本项目内用 TypeScript 实现，参考同一上游的 EAPI/RPC 协议。域名缓存 source-domains.json 和会话缓存 source-session.json 位于 STATE_DIR；不缓存密码。并发请求共用发现与登录；搜索、详情遇到通路故障最多换一次入口，认证失效最多重新登录一次。密码错误、CAPTCHA、额度不足和业务拒绝不会触发跨站轮询。文件取票或下载响应丢失不自动重放，避免额外消耗额度。
+
+下载跟随已认证 API 返回的公网 HTTPS 地址及其重定向，无需填写 CDN 域名。跨源不转发 Cookie、Authorization、remix 或自定义认证头，拒绝本地地址、私网 DNS 结果及 HTTPS 降级；兼容 TUN 代理的 198.18.0.0/15 Fake-IP DNS，仍校验原域名 TLS 证书。只有操作者明确配置的固定入口及精确 origin 允许列表可接入本地代理。
 
 ## CWA 与文件入口
 
@@ -61,6 +63,8 @@ CWA_USERNAME、CWA_PASSWORD 和四个 ZLIBRARY 认证变量均支持同名 `_FIL
 `cwa-book-mcp diagnose` 只读取 CWA 搜索接口，不创建状态、不写入 CWA、不登录书源；成功仅表示读取通路可用。默认 stdio 模式只在 stderr 输出脱敏错误。常见配置错误包含 CONFIG_REQUIRED、STATE_IN_USE、FILE_PORT_IN_USE、SQLITE_UNAVAILABLE。
 
 若 CWA 反馈上传排队失败，get_task 的 submission_error 会保留原因；即使 HTTP 200，也继续核对书库。检查 CWA 服务日志中的 `Failed to queue upload for ingest` 及目录权限等具体异常，不通过重复上传或自动改配置处理。
+
+日志若为 `Ingest directory not writable: /cwa-book-ingest`，检查对应宿主机卷是否读写、实际进程 UID/GID、目录及父目录 ACL。PUID/PGID 使用拥有该目录权限的真实用户数值，不假设为 1000。`NETWORK_SHARE_MODE=true` 可跳过相关 chown，但同时影响 SQLite WAL 与文件监视方式，应按实际挂载评估，且不能代替写权限。错误日志为 stdout 时须查看容器日志。
 
 EOF、SIGINT、SIGTERM 会关闭本进程。重启后核对已提交任务、恢复已完整落盘但尚未更新数据库的文件，并清理残片。上传结果未知的任务永不自动重新提交；retry 是继续核对。确认失败时检查 CWA，必要时由操作者取消并重新创建任务。
 

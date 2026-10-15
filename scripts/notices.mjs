@@ -5,7 +5,7 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const visited = new Set();
 const blocks = [
   'Runtime dependency licenses for cwa-book-mcp. Generated from the installed locked dependency tree.\n' +
-    'Z-Library EAPI/RPC compatibility was reimplemented with reference to heartleo/zlib (MIT); see heartleo-zlib-LICENSE.txt.',
+    'Z-Library EAPI/RPC compatibility and domain-policy bootstrap were reimplemented with reference to heartleo/zlib (MIT); see heartleo-zlib-LICENSE.txt.',
 ];
 async function locate(name, from) {
   for (let dir = from; dir !== parse(dir).root; dir = dirname(dir)) {

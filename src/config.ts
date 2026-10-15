@@ -28,6 +28,9 @@ export interface Config {
   ticketSeconds: number;
   retentionDays: number;
 }
+export function sourceConfigured(config: Config): boolean {
+  return !!(config.sourceUrl || config.sourceEmail || config.sourceUserId);
+}
 export function urlSetting(raw: string, name: string): string {
   try {
     const u = new URL(raw);
@@ -103,8 +106,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     (sourceEmail && sourceUserId)
   )
     fail('CONFIG_INVALID', '书源邮箱/密码与用户 ID/KEY 为两种完整且互斥的认证方式');
-  if (!sourceUrl && (sourceEmail || sourceUserId))
-    fail('CONFIG_REQUIRED', '书源认证需要 ZLIBRARY_BASE_URL');
   const sourceOrigins = (env.ZLIBRARY_FILE_ORIGINS || '')
     .split(',')
     .map((s) => s.trim())

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
-import { loadConfig } from './config.js';
+import { loadConfig, sourceConfigured } from './config.js';
 import { createApp } from './app.js';
 import { createMcp } from './mcp.js';
 import { Cwa } from './cwa.js';
@@ -19,7 +19,7 @@ async function main(): Promise<void> {
   }
   if (args.length === 1 && ['--help', '-h'].includes(args[0]!)) {
     process.stdout.write(
-      'cwa-book-mcp [diagnose | --help | --version]\n默认：stdio MCP + 同进程授权文件 HTTP。\n需要：CWA_BASE_URL、CWA_USERNAME、CWA_PASSWORD（凭据支持 _FILE）。\n可选：CWA_WRITE_ENABLED、STATE_DIR、INSTANCE_ID、FILE_HOST、FILE_PORT、PUBLIC_BASE_URL。\n书源：ZLIBRARY_BASE_URL + EMAIL/PASSWORD 或 USER_ID/USER_KEY（均带 ZLIBRARY_ 前缀）。\n详见包内 docs/configuration.md。\n',
+      'cwa-book-mcp [diagnose | --help | --version]\n默认：stdio MCP + 同进程授权文件 HTTP。\n需要：CWA_BASE_URL、CWA_USERNAME、CWA_PASSWORD（凭据支持 _FILE）。\n可选：CWA_WRITE_ENABLED、STATE_DIR、INSTANCE_ID、FILE_HOST、FILE_PORT、PUBLIC_BASE_URL。\n书源：EMAIL/PASSWORD 或 USER_ID/USER_KEY（均带 ZLIBRARY_ 前缀）；自动维护域名，ZLIBRARY_BASE_URL 可选固定入口。\n详见包内 docs/configuration.md。\n',
     );
     return;
   }
@@ -34,7 +34,7 @@ async function main(): Promise<void> {
         JSON.stringify({
           cwa_read: true,
           write_enabled: config.writeEnabled,
-          source_configured: !!config.sourceUrl,
+          source_configured: sourceConfigured(config),
         }) + '\n',
       );
     } finally {
