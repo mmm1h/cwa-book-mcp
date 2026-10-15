@@ -42,6 +42,8 @@ CWA_USERNAME、CWA_PASSWORD 和四个 ZLIBRARY 认证变量均支持同名 `_FIL
 
 书源自动缓存已验证的会话，不保存密码。认证失效只尝试一次重新登录；CAPTCHA、额度限制和不兼容响应明确返回错误。跨源文件请求必须在精确允许列表内，且不转发 Cookie、Authorization、remix 或自定义认证头。
 
+书源适配参考 [heartleo/zlib](https://github.com/heartleo/zlib) 的 EAPI/RPC 协议，在本项目内用 TypeScript 实现，仍需配置入口和账号或有效会话。入口可参考其 [实测域名清单](https://github.com/heartleo/zlib/blob/main/README.zh.md#推荐访问域名) 和社区维护的 [Awesome-Zlibrary](https://github.com/dongyubin/Awesome-Zlibrary)。先用不带凭据的 `/eapi/info/domains` 检查候选，再设置 ZLIBRARY_BASE_URL；域名列表可达不代表登录和下载通过。当前不会自动切换书源域名或把凭据提交给网址发布页。
+
 ## CWA 与文件入口
 
 先保证标准 OPDS 搜索和下载可用。写入前确认账号上传权限、标准登录/CSRF、允许的 EPUB/PDF 输入、目标转换格式与重复处理设置；本程序不会自动修改它们。转换属于 CWA；已有记录缺少目标格式时会受阻，不通过覆盖已有格式触发转换。

@@ -12,7 +12,7 @@ const cleanups: (() => Promise<unknown>)[] = [];
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
-async function sourceFixture() {
+async function sourceFixture(metadata: Record<string, unknown> = {}) {
   const state = {
     login: 0,
     profile: 0,
@@ -32,6 +32,7 @@ async function sourceFixture() {
     language: 'chinese',
     extension: 'epub',
     filesize: epub.length,
+    ...metadata,
   };
   const endpoint = await listen(async (req, res) => {
     const path = new URL(req.url!, 'http://localhost').pathname;
@@ -119,6 +120,36 @@ async function sourceFixture() {
   cleanups.push(endpoint.close);
   return { ...endpoint, state };
 }
+test.each([
+  { name: 'null', identifier: null, isbn: undefined },
+  {
+    name: 'multiple identifiers',
+    identifier: '9780140390693,0140390693,9780141439570,0141439572,9780141439518,0141439513',
+    isbn: '9780140390693',
+  },
+])(
+  '$name source metadata preserves search candidates and EPUB download',
+  async ({ identifier, isbn }) => {
+    const fixture = await sourceFixture({ isbn: null, identifier, filesize: null });
+    const temp = await testConfig('http://localhost', {
+      ZLIBRARY_BASE_URL: fixture.url,
+      ZLIBRARY_USER_ID: '7',
+      ZLIBRARY_USER_KEY: 'session-key',
+    });
+    cleanups.push(temp.cleanup);
+    const source = new Source(temp.config);
+    cleanups.push(() => source.close());
+    const search = await source.search('合成测试书');
+    expect(search.books).toHaveLength(1);
+    const book = search.books[0]!;
+    expect(book).toMatchObject({ id: '25', title: '合成测试书', language: 'zh' });
+    expect(book.isbn).toBe(isbn);
+    expect(book.size_bytes).toBeUndefined();
+    const response = await source.open(book);
+    expect(Buffer.from(await response.body.arrayBuffer())).toEqual(epub);
+    expect(fixture.state.files).toBe(1);
+  },
+);
 test('email login, private session cache, controlled reauthentication, download, quota and CAPTCHA', async () => {
   const fixture = await sourceFixture();
   const temp = await testConfig('http://localhost', {

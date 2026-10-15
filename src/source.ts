@@ -27,12 +27,16 @@ const rawBook = z.object({
   author: z.string().default(''),
   language: z.string().default('unknown'),
   extension: z.string(),
-  isbn: scalar.optional(),
-  identifier: scalar.optional(),
-  filesize: z.union([z.string(), z.number()]).optional(),
+  isbn: scalar.nullish(),
+  identifier: scalar.nullish(),
+  filesize: z.union([z.string(), z.number()]).nullish(),
 });
 function mapBook(raw: z.infer<typeof rawBook>): Book {
   const size = Number(raw.filesize);
+  const isbn = [raw.isbn, raw.identifier]
+    .flatMap((value) => (value || '').split(/[,;，\r\n]/))
+    .map((value) => value.trim())
+    .find((value) => value.length > 0 && value.length <= 64);
   return bookSchema.parse({
     origin: 'zlibrary',
     id: raw.id,
@@ -41,7 +45,7 @@ function mapBook(raw: z.infer<typeof rawBook>): Book {
     authors: raw.author ? raw.author.split(/;\s*/).slice(0, 16) : [],
     language: language(raw.language),
     formats: [raw.extension.toLowerCase()],
-    isbn: raw.isbn || raw.identifier,
+    isbn,
     size_bytes: Number.isSafeInteger(size) && size > 0 ? size : undefined,
   });
 }
