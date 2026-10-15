@@ -1,0 +1,42 @@
+name: Publish npm
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: npm distribution tag (stable requires completed acceptance)
+        type: choice
+        options: [next, latest]
+        default: next
+permissions:
+  contents: read
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require acceptance on this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          successful_runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&status=success" --jq '.total_count')
+          test "$successful_runs" -gt 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+      - run: npm install -g npm@11
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run check
+      - run: npm run test:package
+      - run: npm audit --omit=dev --audit-level=high
+      - run: npm publish --provenance --access public --tag ${{ inputs.tag }}
+      - name: Public registry smoke
+        run: |
+          package_version=$(node -p "require('./package.json').version")
+          cd "$RUNNER_TEMP"
+          npm exec --yes --ignore-scripts --cache "$RUNNER_TEMP/published-cache" --package "cwa-book-mcp@$package_version" -- cwa-book-mcp --version

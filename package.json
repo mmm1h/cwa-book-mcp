@@ -1,0 +1,63 @@
+{
+  "name": "cwa-book-mcp",
+  "version": "0.1.0",
+  "description": "Search, acquire, upload and download CWA library books over stdio MCP",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mmm1h/cwa-book-mcp.git"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "bin": {
+    "cwa-book-mcp": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "npm-shrinkwrap.json",
+    "README.md",
+    "PLAN.md",
+    "docs",
+    "examples",
+    "LICENSE",
+    "third_party"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.test.json",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "npm run build && vitest run",
+    "check": "npm run typecheck && npm run lint && npm run format:check && npm test",
+    "test:package": "npm run build && node scripts/package-smoke.mjs",
+    "test:integration": "npm run build && node scripts/cwa-integration.mjs",
+    "test:clients": "npm run build && node scripts/clients-smoke.mjs",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "2.3.1",
+    "better-sqlite3": "13.0.3",
+    "cheerio": "1.2.0",
+    "crc-32": "1.2.2",
+    "saxes": "6.0.0",
+    "tough-cookie": "6.0.2",
+    "undici": "8.12.1",
+    "yauzl": "3.4.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@modelcontextprotocol/client": "2.3.1",
+    "@types/better-sqlite3": "9.6.0",
+    "@types/node": "26.6.5",
+    "@types/yauzl": "3.4.0",
+    "eslint": "10.12.0",
+    "prettier": "3.9.10",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.71.2",
+    "vitest": "4.1.11"
+  }
+}

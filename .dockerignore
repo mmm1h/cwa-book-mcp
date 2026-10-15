@@ -1,8 +1,0 @@
-*
-!go.mod
-!go.sum
-!LICENSE
-!cmd/**
-!internal/**
-!third_party/zlib/**
-!third_party/licenses/**

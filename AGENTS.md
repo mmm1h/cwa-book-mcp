@@ -1,52 +1,17 @@
 # Agent 工作说明
 
-先读本文件和 [plan/README.md](plan/README.md)，再根据当前任务按需读取文档。不要每轮加载整个 plan 或复制全部研究资料。
+先读本文件和 [PLAN.md](PLAN.md)，按任务读取配置、接口或验证文档。当前用户指令优先；旧提交、旧记忆和旧 Go 方案不是需求来源。
 
-## 当前任务的权威来源
+- Node.js + TypeScript，原生 npm 包，stdio 是唯一 MCP 传输。授权文件 HTTP 接口与 MCP 共用进程。
+- CWA 是唯一持久书库，负责转换、入库与重复处理；不改其源码、数据库、内部脚本或自动修改配置。
+- 中文优先顺序：CWA 中文 → 书源中文 → CWA 其他 → 书源其他。失败或未完成搜索不能当作无结果。
+- 仅在 CWA 身份与目标格式文件均验证通过后进入 ready。上传结果不明先核对，不自动重传。
+- EPUB/PDF，流式整文件 PUT/GET；不做分块续传、译本隔离、书名改写、标签注入或元数据写回。
+- 不引入其他应用运行时、外部数据库、队列、浏览器自动化或管理页面。SQLite 为本地状态；无固定 RSS 预算，仍须控制并发、文件流和临时存储。
+- 不提交凭据、真实书籍、私有日志、运行时状态或真实部署域名。样例使用 localhost、example.invalid 和占位符。
+- 不调用 OpenViking remember 工具或任何 namespaced 变体。
+- 不自动改生产 NAS、CWA、MCPHub；隔离测试可用原版 CWA 容器，它不是应用分发方式。
+- 默认 main 聚焦提交。完成阶段同步 PLAN.md 和 docs/validation.md；只记录当前实现的实际证据，不沿用旧实现测试结论。
+- 文档只保留 README.md、AGENTS.md、PLAN.md、docs/configuration.md、docs/contracts.md、docs/validation.md；许可证说明可单列。不保留历史文档副本。
 
-1. 当前用户明确指令。
-2. [需求范围](plan/00-scope.md)。
-3. 本次所需的设计与验收文档。
-4. 上游研究证据；它们不能替代目标实例测试。
-
-项目初始化只做文档，后续 Agent 负责实现。不要把设计、样例配置或模拟结果描述为已上线能力。
-
-## 必须遵守
-
-- 应用使用 Go；不引入 Python、Node.js 运行时、浏览器自动化、外部数据库或消息队列。
-- 只新增本项目这一个服务。MCP 和授权文件接口共用进程。
-- CWA 是唯一持久书库。转换、入库和已有重复处理归 CWA。
-- 不改 CWA 源码、镜像内部脚本或数据库；不接管转换。
-- 不自动调整 CWA 配置。必要的标准设置由操作者在部署验收时确认。
-- 首版不实现译本隔离、书名改写、任务标签注入和元数据写回。
-- 首版文件接口采用流式整文件上传，不实现自定义分块/Range 续传；任务只等待一个必需格式。
-- 中文优先、书库优先规则以 scope 为准；搜索失败不等于无结果。
-- 只有从 CWA 验证到所需格式的有效文件，任务才可进入 ready。
-- 对上传结果不确定的任务先核对书库，不盲目重传。
-- 严守 [内存预算](plan/02-stack-and-memory.md)。文件不得整体读入内存。
-- 不提交实际域名配置、账号、Cookie、令牌、真实书籍、运行时数据库或私有日志。
-- 不调用 OpenViking remember 工具及任何 namespaced 变体。
-
-## 渐进式读取
-
-| 正在做什么 | 追加阅读 |
-| --- | --- |
-| 选择依赖、处理资源上限 | [技术栈与内存](plan/02-stack-and-memory.md) |
-| 增加 MCP 或 HTTP 接口 | [接口契约](plan/03-contracts.md) |
-| 对接 CWA、判断入库 | [CWA 集成](plan/04-cwa-integration.md) |
-| 实现任务恢复、模块边界 | [架构](plan/01-architecture.md) |
-| 安排开发顺序 | [实施计划](plan/05-implementation.md) |
-| 验证和发布 | [验收](plan/06-validation.md)、[运维设计](docs/operations.md) |
-| 核对上游事实 | [研究证据](docs/research/upstream-audit.md) |
-
-## 工作方式
-
-- 默认在 main 上做聚焦提交，不默认建立 PR。已有分支或用户的新指令优先。
-- 从当前最早未完成阶段推进；每阶段同步代码、必要测试和受影响文档。
-- 不提前建立空模块、通用插件框架、Web 管理界面或未来功能。
-- 先完成无凭据的编译、模拟和资源测试；真实接入所缺配置集中记录，不伪造成功。
-- 隔离的原版 CWA 测试使用独立临时数据和测试账号，不需要生产凭据。禁止新增应用运行时不妨碍测试既有 CWA；它不成为本项目镜像中的额外运行时。
-- 公开仓库中的样例只使用 example.invalid、localhost、Docker 服务名和占位符。
-- 未取得真实部署授权时，开发交付限于仓库内容和测试；现有 NAS、MCPHub、CWA 配置不属于代码实现任务的自动修改范围。
-- 关键方案变更写入 [决策记录](docs/decisions.md)，并更新唯一所属文档；不要复制另一份路线图。
-- 完成阶段后更新 plan/README.md 的状态和证据链接。只勾选已经完成并验证的项。
+接口改动读 [contracts](docs/contracts.md)，配置/打包读 [configuration](docs/configuration.md)，验证读 [validation](docs/validation.md)。运行 npm run check，行为改动补充有价值的回归测试；发布前测试实际 tarball 和干净缓存启动。

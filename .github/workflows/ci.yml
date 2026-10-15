@@ -1,21 +1,114 @@
-name: checks
+name: Node acceptance
 on:
   push:
   pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
-  go:
-    runs-on: ubuntu-latest
+  platform:
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        runner:
+          [ubuntu-24.04, ubuntu-24.04-arm, windows-2025, windows-11-arm, macos-15-intel, macos-15]
+        node: ['22.19.0', '24']
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-node@v4
         with:
-          go-version: '1.27.2'
-          cache: true
-      - run: test -z "$(gofmt -l cmd internal tools)"
-      - run: go vet ./...
-      - run: go test ./... -timeout 90s
-      - run: go test -race ./cmd/cwa-book-mcp ./internal/config ./internal/mcp ./internal/store ./internal/files ./internal/jobs ./internal/catalog ./internal/server ./internal/source/zlib -timeout 120s
-      - run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' ./cmd/cwa-book-mcp
-      - run: CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags='-s -w' ./cmd/cwa-book-mcp
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: npm-shrinkwrap.json
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run check
+      - run: npm run test:package
+  musl:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        node: ['22', '24']
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Alpine install, behavior and actual npm package
+        run: docker run --rm -v "$PWD:/repo" -w /repo node:${{ matrix.node }}-alpine sh -c "npm ci --ignore-scripts --no-audit --no-fund && npm run check && npm run test:package"
+  original-cwa:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Start unmodified, isolated CWA
+        env:
+          CWA_IMAGE: ghcr.io/crocodilestick/calibre-web-automated:v4.0.8
+        run: |
+          mkdir -p .work "$RUNNER_TEMP/cwa-config" "$RUNNER_TEMP/cwa-ingest" "$RUNNER_TEMP/cwa-library"
+          docker pull "$CWA_IMAGE"
+          docker image inspect --format '{{json .RepoDigests}}' "$CWA_IMAGE" > .work/cwa-image.json
+          docker run -d --name cwa-original -p 127.0.0.1:8083:8083 -e PUID="$(id -u)" -e PGID="$(id -g)" -e TZ=UTC -v "$RUNNER_TEMP/cwa-config:/config" -v "$RUNNER_TEMP/cwa-ingest:/cwa-book-ingest" -v "$RUNNER_TEMP/cwa-library:/calibre-library" "$CWA_IMAGE"
+      - name: EPUB ingestion and PDF to EPUB conversion
+        env:
+          CWA_INTEGRATION: '1'
+          CWA_BASE_URL: http://localhost:8083
+          CWA_USERNAME: admin
+          CWA_PASSWORD: admin123
+        run: npm run test:integration | tee .work/original-cwa-current.txt
+      - if: failure()
+        run: docker logs --tail 100 cwa-original
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: original-cwa
+          path: |
+            .work/original-cwa-current.txt
+            .work/cwa-image.json
+          retention-days: 14
+      - if: always()
+        run: docker rm -f cwa-original
+  clients:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm install --prefix .work/clients --no-save --package-lock=false --ignore-scripts --no-audit --no-fund @samanhappy/mcphub@1.1.3 @anthropic-ai/claude-code@2.1.300
+      - name: MCPHub shared child and CLI health
+        run: |
+          export MCPHUB_ENTRY="$PWD/.work/clients/node_modules/@samanhappy/mcphub/dist/index.js"
+          export CLAUDE_CLI_PATH="$PWD/.work/clients/node_modules/@anthropic-ai/claude-code/cli.js"
+          npm run test:clients
+  resources:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run build
+      - run: node --expose-gc scripts/resources.mjs
+        env:
+          RESOURCE_FILE_BYTES: '1073741824'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: resources-${{ matrix.runner }}
+          path: .work/resources-current.json
+          retention-days: 14
