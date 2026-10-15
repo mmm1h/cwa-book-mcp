@@ -29,6 +29,8 @@
 
 CWA 的上传响应为 HTTP 200 和 location，但同一会话同时提示上传任务排队失败。只读检查确认允许 EPUB、目标格式为 EPUB、监控服务报告运行；这些信息仍不足以定位排队异常。尚需对应 CWA 服务日志，不能把排队失败推断为已经入库或确定未接收。
 
+上游排查已核对 [v4.0.8 上传源码](https://github.com/crocodilestick/Calibre-Web-Automated/blob/3ce7bf80c8c66485eec7218c6b6c3fef8e6e6ba5/cps/editbooks.py)：账号无上传权限会返回 403，本次提示来自通过权限检查后的保存或排队异常。同类记录包括入库目录权限 [#603](https://github.com/crocodilestick/Calibre-Web-Automated/issues/603)、未挂载入库目录 [#995](https://github.com/crocodilestick/Calibre-Web-Automated/issues/995#issuecomment-3832106829)，以及文件名过长的未合并修复 [#1511](https://github.com/crocodilestick/Calibre-Web-Automated/pull/1511)。MCP 上传使用短文件名 `book.epub`；用户反馈网页上传正常，这些案例均不能直接证明目标实例根因。另有 v4.0.8 [#1569](https://github.com/crocodilestick/Calibre-Web-Automated/issues/1569) 报告入库时数据库锁定，但发生在文件已排队后的阶段，与本次提示不同。
+
 已修复上传反馈遗漏：提交后读取同一会话的错误提示，保存脱敏 submission_error；核对与 retry 仍不重新提交。新增测试覆盖 HTTP 200 排队错误的保留，以及报错后实际已入库的安全核对。实际目标的未确认任务和原创测试文件保留在本机忽略目录或临时状态目录，未自动重传、删除书库记录或调整 CWA 配置。
 
 ## 资源观测
