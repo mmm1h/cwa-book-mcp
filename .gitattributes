@@ -7,3 +7,7 @@
 *.yml text eol=lf
 *.yaml text eol=lf
 *.sh text eol=lf
+*.txt text eol=lf
+.gitignore text eol=lf
+.gitattributes text eol=lf
+.prettierignore text eol=lf

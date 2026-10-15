@@ -39,5 +39,11 @@ async function visit(name, from) {
 }
 const pkg = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
 for (const name of Object.keys(pkg.dependencies).sort()) await visit(name, root);
-await writeFile(join(root, 'third_party', 'NOTICE.txt'), blocks.join('\n') + '\n');
+await writeFile(
+  join(root, 'third_party', 'NOTICE.txt'),
+  blocks
+    .join('\n')
+    .replace(/[ \t]+$/gm, '')
+    .trimEnd() + '\n',
+);
 console.log('Collected ' + visited.size + ' runtime dependency notices');
