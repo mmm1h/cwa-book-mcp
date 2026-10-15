@@ -1,12 +1,12 @@
 # 当前实现验证
 
-以下仅为 Node.js/TypeScript 实现的证据，更新时间 2026-10-15。提交 [88e4dd6](https://github.com/mmm1h/cwa-book-mcp/commit/88e4dd61753905458d747dfed5bf2cebf577b197) 的 [Node acceptance](https://github.com/mmm1h/cwa-book-mcp/actions/runs/38685526062) 全部 20 项通过。之后的上传反馈、书源兼容和自动域名维护已在本地通过 47 个测试及空缓存 tarball 验证，尚未重新运行完整平台 CI。目标 CWA 上传和真实书源获取闭环均已实测通过；npm 已登录，尚未公开发布。
+以下仅为 Node.js/TypeScript 实现的证据，更新时间 2026-10-15。发布提交 [c8db4aa](https://github.com/mmm1h/cwa-book-mcp/commit/c8db4aa2dcfd3f83451775c38ad9ac1c4f3bc160) 的 [Node acceptance](https://github.com/mmm1h/cwa-book-mcp/actions/runs/38723235707) 全部 20 项通过，覆盖当前 47 个行为测试。目标 CWA 上传和真实书源获取闭环均已实测通过；0.1.0 已公开发布，公共 registry 的空缓存安装与 stdio 验收通过。
 
 | 项目                                               | 实际结果                                                                                                  |
 | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| Node 22.19.0 / 24，Windows/macOS/Linux × x64/arm64 | 12 项 CI 均通过类型、lint、格式、26 个行为测试及实际 tarball 安装                                         |
+| Node 22.19.0 / 24，Windows/macOS/Linux × x64/arm64 | 12 项 CI 均通过类型、lint、格式、47 个行为测试及实际 tarball 安装                                         |
 | Linux musl，Node 22 / 24 × x64/arm64               | 4 项 Alpine CI 均通过相同检查及安装；禁用安装脚本                                                         |
-| npm tarball                                        | 空缓存、中文/空格空目录、禁用安装脚本；npx 冷启动、五工具发现/调用与两次缓存重启通过                      |
+| npm tarball / 公共 registry                        | 本地包与公共 0.1.0 均通过空缓存、中文/空格空目录、禁用安装脚本、五工具发现/调用及两次重启；状态保留       |
 | 原版 CWA v4.0.8                                    | 独立临时书库，原创 EPUB 入库和 PDF→EPUB 转换均达到 ready，实际下载文件通过格式与身份验证                  |
 | MCPHub 1.1.3                                       | 隔离实例从 tarball 启动 stdio 子进程，五工具发现/调用通过；两个下游客户端先后连接，共享进程与状态持续可用 |
 | Claude Code 2.1.300                                | 隔离配置中的实际 npx tarball 健康检查为 Connected；未调用模型                                             |
@@ -14,7 +14,9 @@
 
 当前 47 个行为测试覆盖：四个 MCP 协议版本、真实 stdio 子进程、上传后强杀与恢复、响应丢失后的核对、防重复提交、丢失输入恢复、人工匹配、EPUB CRC/OPF、票据与身份变化、书源会话/RPC/额度/验证码及书号兼容，以及自动域名维护、提前刷新、缓存/内置回退、旧会话复用、并发与取消隔离、公网 CDN 重定向和 DNS 私网阻断。
 
-原版 CWA 镜像 digest 为 `sha256:5e00373854247750cc3e4479b492ae09293ff5e06ed10177f226634d97888679`。本次 EPUB→EPUB 下载为 6841 字节，PDF→EPUB 为 43723 字节；SHA256、镜像与输出记录在该 CI 的 `original-cwa` artifact 中。测试未修改 CWA 源码或自动调整其设置。
+原版 CWA 镜像 digest 为 `sha256:5e00373854247750cc3e4479b492ae09293ff5e06ed10177f226634d97888679`。本次 EPUB→EPUB 下载为 6844 字节，PDF→EPUB 为 44722 字节；SHA256、镜像与输出记录在该 CI 的 `original-cwa` artifact 中。测试未修改 CWA 源码或自动调整其设置。
+
+公共包 `cwa-book-mcp@0.1.0` 为 110,867 字节，SHA-256 为 `b82b54c0291d1bc3dc65942c2e7618a9f5ea6763fed13d41815196cfda53bda6`；registry integrity 与实际下载均匹配已验收安装包。首次发布处理完成后，next 和 latest 均指向 0.1.0，渠道行为见 [配置](configuration.md)。Windows x64、Node 25.5.0 的公共空缓存安装耗时约 89 秒；五工具、两次重启和持久状态通过，私有报告位于忽略目录中的 `public-npm-next/verification.json`。
 
 ## 目标 CWA 本地验证
 
@@ -49,15 +51,15 @@ CWA 的入库目录不可写曾导致 HTTP 200 和 location 同时伴随排队�
 
 | Linux 架构 | 大文件流程耗时 | RSS 峰值 / 结束   | 事件循环 p99 / 最大 |
 | ---------- | -------------- | ----------------- | ------------------- |
-| x64        | 39.75 秒       | 207.1 / 189.9 MiB | 21.45 / 337.64 ms   |
-| arm64      | 32.21 秒       | 203.2 / 183.7 MiB | 21.54 / 362.55 ms   |
+| x64        | 38.23 秒       | 202.3 / 186.9 MiB | 21.54 / 389.55 ms   |
+| arm64      | 32.46 秒       | 226.0 / 199.3 MiB | 21.58 / 402.13 ms   |
 
 原始报告为该 CI 的 `resources-ubuntu-24.04` 和 `resources-ubuntu-24.04-arm` artifacts，保留 14 天。这是指定工作负载的观测，不是固定 RSS 门槛，也不等于长期稳定性或真实网络吞吐保证。
 
 ## 可重复验证
 
 - `npm run check`：配置、SQLite 所有权/事务/密钥、中文优先分页、CWA CSRF、源站登录/会话/额度/验证码、流式校验、签名票据、幂等、响应丢失、重启和协议。
-- `npm run test:package`：实际 tarball，空目录与空缓存，关闭安装脚本，验证包内容及 npx stdio 生命周期。设置 PUBLISHED_PACKAGE_SPEC 为当前 name@version 可验证公共 registry 的包完整性和同一套启动流程。
+- `npm run test:package`：实际 tarball，空目录与空缓存，关闭安装脚本，验证包内容及 npx stdio 生命周期。在对应发布提交上设置 PUBLISHED_PACKAGE_SPEC 为其 name@version，可验证公共 registry 的包完整性和同一套启动流程。
 - `npm run test:clients`：指定 MCPHUB_ENTRY 与/或 CLAUDE_CLI_PATH，全部配置与账号是临时测试内容；不修改已有客户端配置。
 - `npm run test:integration`：仅在 CWA_INTEGRATION=1 时向指定的隔离原版 CWA 上传原创测试文件；验证 EPUB 入库与 PDF→EPUB 转换。
 - `node --expose-gc scripts/resources.mjs`：默认 256 MiB，RESOURCE_FILE_BYTES 可设为 1073741824；报告写入忽略目录 .work/resources-current.json。
@@ -66,6 +68,6 @@ CI 定义位于 [.github/workflows/ci.yml](../.github/workflows/ci.yml)：12 个
 
 ## 尚需外部验收
 
-公共 npm 首次发布与公共 registry 的完整安装仍未完成；本机已通过官方浏览器授权完成 npm 登录。发布 next 后需核对公共包 integrity 并验收空缓存安装，随后配置 OIDC。
+后续自动发布仍需在 npm 配置本仓库的 trusted publisher，并建立 GitHub npm environment；本次首发为维护者交互发布，不宣称已生成 OIDC/provenance 证明。
 
 MCPHub 网络、反代上传限制、远端 Agent 的 PUT/GET 能力，以及手机/网页到 Hub 的实际访问仍需验证。本机目标 CWA 闭环和隔离客户端兼容性不替代这些部署验收。

@@ -78,6 +78,8 @@ EOF、SIGINT、SIGTERM 会关闭本进程。重启后核对已提交任务、恢
 
 首次交互发布使用已验证邮箱、已启用 2FA 的账号执行 `npm login`；默认浏览器授权，终端密码登录也可能要求一次性验证。首次发布前核对包名 cwa-book-mcp 是否可用；冲突时改为维护者 scope，并同步示例。先发布 next 通道并从公共 registry 验证，再推广稳定版本。若同一 0.1.0 已发布到 next，使用 `npm dist-tag add cwa-book-mcp@0.1.0 latest` 推广，不能覆盖同版本包。
 
-首次发布后在 npm 为本仓库的 publish.yml 配置 GitHub Actions trusted publisher，并建立 npm environment。后续手动工作流使用 OIDC/provenance，发布前要求当前提交的完整 acceptance 工作流成功，不保存长期 npm 令牌。发布后以 `PUBLISHED_PACKAGE_SPEC=cwa-book-mcp@0.1.0` 运行 `npm run test:package`，核对公共包 integrity 与本地产物一致，再验证空缓存安装、五工具发现/调用及重启。真实书源和目标部署的剩余验收仍须按 [validation](validation.md) 完成。
+npm 首次发布可能同时生成 latest；本次指定 next 仍出现两个标签，删除 latest 被 registry 以 HTTP 400 拒绝，与 [npm/cli#8490](https://github.com/npm/cli/issues/8490) 的报告一致。试用时使用 `@next` 或固定版本，后续稳定推广单独决定。
+
+首次发布后在 npm 为本仓库的 publish.yml 配置 GitHub Actions trusted publisher，并建立 npm environment。后续手动工作流使用 OIDC/provenance，发布前要求当前提交的完整 acceptance 工作流成功，不保存长期 npm 令牌。在对应发布提交上，以 `PUBLISHED_PACKAGE_SPEC=cwa-book-mcp@0.1.0` 运行 `npm run test:package`，核对公共包 integrity 与本地产物一致，再验证空缓存安装、五工具发现/调用及重启。真实书源和目标部署的剩余验收仍须按 [validation](validation.md) 完成。
 
 参考：[npm 登录](https://docs.npmjs.com/cli/v11/commands/npm-login)、[npm 2FA](https://docs.npmjs.com/about-two-factor-authentication)、[npm trusted publishers](https://docs.npmjs.com/trusted-publishers)、[npm shrinkwrap](https://docs.npmjs.com/cli/v11/configuring-npm/npm-shrinkwrap-json)、[MCPHub 配置](https://docs.mcphub.app/configuration/mcp-settings)、[VS Code MCP](https://code.visualstudio.com/docs/copilot/customization/mcp-servers)。

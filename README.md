@@ -6,6 +6,8 @@ Node.js + TypeScript，单进程，stdio MCP，npm 分发。推荐 Node.js 24 LT
 
 **0.1.0 为 next 试用版本，已通过本地、隔离集成和目标 CWA 的真实书源获取与上传验收。** 支持本地进程的 MCP 客户端可使用：
 
+[npm 安装入口](https://www.npmjs.com/package/cwa-book-mcp/v/0.1.0)：`npx -y cwa-book-mcp@next`，或使用下方固定版本配置。
+
 ```json
 {
   "mcpServers": {

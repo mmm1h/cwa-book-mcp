@@ -28,7 +28,7 @@ CLI/config → MCP 工具 → catalog/tasks → CWA/source；files 与 MCP 共�
 | CWA 和文件闭环 | 完成；隔离转换及目标 stdio 上传、入库、下载与重启通过     | 搜索/读写/验证/幂等/强杀恢复，EPUB 入库与 PDF→EPUB 转换 |
 | 书源闭环       | 完成；真实自动入口获取、目标 CWA 入库与下载、书库复用通过 | 两种认证及同源 RPC、搜索/获取、书库复用、错误边界       |
 | 分发与客户端   | 完成；20 项 CI、MCPHub/CLI 与空缓存 tarball 通过          | Node 22/24、六个平台及 Linux musl，实际 stdio 接入      |
-| 发布           | npm 登录、本地打包与 OIDC 工作流完成；尚未公开发布        | next 发布与公共 registry 完整验证                       |
+| 发布           | 0.1.0 已发布 next，公共 registry 安装与 stdio 验收通过    | 后续可配置 OIDC；渠道与证据见 validation                |
 
 当前验收的提交、CI 链接与资源观测统一见 [验证结果](docs/validation.md)。发布工作流要求待发布提交的完整 CI 成功，再校验公共 registry 包的完整性及 stdio 启动。
 
