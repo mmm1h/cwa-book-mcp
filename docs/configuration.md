@@ -4,15 +4,15 @@
 
 ## 启动与客户端
 
-发布后：`npx -y cwa-book-mcp@0.1.0`。默认就是 stdio，无 transport 参数。开发阶段先 `npm ci && npm run build`，配置相同环境变量后运行 `node dist/cli.js`。本地 tarball 可使用 `npx -y --package ./cwa-book-mcp-0.1.0.tgz cwa-book-mcp`。
+启动：`npx -y cwa-book-mcp@latest`。默认就是 stdio，无 transport 参数。开发阶段先 `npm ci && npm run build`，配置相同环境变量后运行 `node dist/cli.js`。本地 tarball 可使用 `npx -y --package ./cwa-book-mcp-0.1.0.tgz cwa-book-mcp`。
 
 - [标准 MCP 配置](../examples/local.json)：支持本地进程的桌面/CLI 客户端。
 - [MCPHub](../examples/mcphub.json)：在 Hub 主机安装 Node，用 command/args/env 导入，`perSessionClient:false` 共享单个子进程。单设备断开不终止共享任务。
 - [VS Code](../examples/vscode.json)：使用 `servers` 外层，放入工作区的 .vscode/mcp.json。
-- Claude Code：`claude mcp add-json cwa-books '<单个 server 对象>'`。Windows 上如某客户端不能直接启动 npx，使用 `command:"cmd"`、`args:["/d","/s","/c","npx","-y","cwa-book-mcp@0.1.0"]`。
+- Claude Code：`claude mcp add-json cwa-books '<单个 server 对象>'`。Windows 上如某客户端不能直接启动 npx，使用 `command:"cmd"`、`args:["/d","/s","/c","npx","-y","cwa-book-mcp@latest"]`。
 - 手机/网页客户端连接远端 MCPHub；它们不在本机执行 npx。Hub 若运行于容器，文件端口与 CWA 网络需在该容器中可达。
 
-首次 npx 会下载 npm 包；离线首次启动不可用。固定版本便于升级回退。应用发布编译后的 JS，运行用户不需要 TypeScript 编译器、Go、Python 或本项目容器。生产依赖无安装后下载器，安装脚本禁用也经过 tarball 验证。
+首次 npx 会下载 npm 包；离线首次启动不可用。默认使用 @latest 跟随发布渠道，升级后需重启 MCP 服务；需要锁定或回退时可改为 @0.1.0 等固定版本。应用发布编译后的 JS，运行用户不需要 TypeScript 编译器、Go、Python 或本项目容器。生产依赖无安装后下载器，安装脚本禁用也经过 tarball 验证。
 
 ## 环境变量
 
@@ -76,9 +76,9 @@ EOF、SIGINT、SIGTERM 会关闭本进程。重启后核对已提交任务、恢
 
 `npm run check` → `npm run test:package` → `npm pack`。包包含 dist、用户文档、许可证和 npm-shrinkwrap.json，不含源码、测试文件、凭据或 Go 产物。改依赖后运行 `node scripts/notices.mjs` 更新许可证。
 
-首次交互发布使用已验证邮箱、已启用 2FA 的账号执行 `npm login`；默认浏览器授权，终端密码登录也可能要求一次性验证。首次发布前核对包名 cwa-book-mcp 是否可用；冲突时改为维护者 scope，并同步示例。先发布 next 通道并从公共 registry 验证，再推广稳定版本。若同一 0.1.0 已发布到 next，使用 `npm dist-tag add cwa-book-mcp@0.1.0 latest` 推广，不能覆盖同版本包。
+默认发布到 latest：交互发布执行 `npm publish --access public --tag latest`，GitHub 发布工作流也默认 latest。仅在明确要求预览版本时选择 next。同一已发布版本只调整标签，不重复发布；例如 `npm dist-tag add cwa-book-mcp@0.1.0 latest`。当前 latest 已指向 0.1.0，已有 next 标签保留兼容。
 
-npm 首次发布可能同时生成 latest；本次指定 next 仍出现两个标签，删除 latest 被 registry 以 HTTP 400 拒绝，与 [npm/cli#8490](https://github.com/npm/cli/issues/8490) 的报告一致。试用时使用 `@next` 或固定版本，后续稳定推广单独决定。
+交互发布使用已验证邮箱、已启用 2FA 的账号执行 `npm login`；默认浏览器授权，终端密码登录也可能要求一次性验证。包名变更时须同步所有示例。
 
 首次发布后在 npm 为本仓库的 publish.yml 配置 GitHub Actions trusted publisher，并建立 npm environment。后续手动工作流使用 OIDC/provenance，发布前要求当前提交的完整 acceptance 工作流成功，不保存长期 npm 令牌。在对应发布提交上，以 `PUBLISHED_PACKAGE_SPEC=cwa-book-mcp@0.1.0` 运行 `npm run test:package`，核对公共包 integrity 与本地产物一致，再验证空缓存安装、五工具发现/调用及重启。真实书源和目标部署的剩余验收仍须按 [validation](validation.md) 完成。
 

@@ -4,16 +4,16 @@
 
 Node.js + TypeScript，单进程，stdio MCP，npm 分发。推荐 Node.js 24 LTS，最低 22.19；无需本项目 Docker 容器。
 
-**0.1.0 为 next 试用版本，已通过本地、隔离集成和目标 CWA 的真实书源获取与上传验收。** 支持本地进程的 MCP 客户端可使用：
+**0.1.0 已发布到 npm latest，已通过本地、隔离集成和目标 CWA 的真实书源获取与上传验收。** 支持本地进程的 MCP 客户端可使用：
 
-[npm 安装入口](https://www.npmjs.com/package/cwa-book-mcp/v/0.1.0)：`npx -y cwa-book-mcp@next`，或使用下方固定版本配置。
+[npm 安装入口](https://www.npmjs.com/package/cwa-book-mcp)：`npx -y cwa-book-mcp@latest`，或导入下方配置。
 
 ```json
 {
   "mcpServers": {
     "cwa-books": {
       "command": "npx",
-      "args": ["-y", "cwa-book-mcp@0.1.0"],
+      "args": ["-y", "cwa-book-mcp@latest"],
       "env": {
         "CWA_BASE_URL": "http://localhost:8083",
         "CWA_USERNAME": "<CWA_USER>",

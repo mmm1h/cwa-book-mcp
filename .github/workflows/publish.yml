@@ -3,10 +3,10 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: npm distribution tag (stable requires completed acceptance)
+        description: npm distribution tag (latest by default; next for previews)
         type: choice
-        options: [next, latest]
-        default: next
+        options: [latest, next]
+        default: latest
 permissions:
   contents: read
 jobs:

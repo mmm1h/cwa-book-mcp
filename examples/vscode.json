@@ -3,7 +3,7 @@
     "cwa-books": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "cwa-book-mcp@0.1.0"],
+      "args": ["-y", "cwa-book-mcp@latest"],
       "env": {
         "CWA_BASE_URL": "http://localhost:8083",
         "CWA_USERNAME": "<CWA_USER>",

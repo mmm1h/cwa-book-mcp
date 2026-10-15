@@ -16,7 +16,7 @@
 
 原版 CWA 镜像 digest 为 `sha256:5e00373854247750cc3e4479b492ae09293ff5e06ed10177f226634d97888679`。本次 EPUB→EPUB 下载为 6844 字节，PDF→EPUB 为 44722 字节；SHA256、镜像与输出记录在该 CI 的 `original-cwa` artifact 中。测试未修改 CWA 源码或自动调整其设置。
 
-公共包 `cwa-book-mcp@0.1.0` 为 110,867 字节，SHA-256 为 `b82b54c0291d1bc3dc65942c2e7618a9f5ea6763fed13d41815196cfda53bda6`；registry integrity 与实际下载均匹配已验收安装包。首次发布处理完成后，next 和 latest 均指向 0.1.0，渠道行为见 [配置](configuration.md)。Windows x64、Node 25.5.0 的公共空缓存安装耗时约 89 秒；五工具、两次重启和持久状态通过，私有报告位于忽略目录中的 `public-npm-next/verification.json`。
+公共包 `cwa-book-mcp@0.1.0` 为 110,867 字节，SHA-256 为 `b82b54c0291d1bc3dc65942c2e7618a9f5ea6763fed13d41815196cfda53bda6`；registry integrity 与实际下载均匹配已验收安装包。默认渠道 latest 指向 0.1.0，安装示例与后续发布工作流统一使用 latest。Windows x64、Node 25.5.0 的公共空缓存安装耗时约 89 秒；五工具、两次重启和持久状态通过，私有报告位于忽略目录中的 `public-npm-next/verification.json`。
 
 ## 目标 CWA 本地验证
 
