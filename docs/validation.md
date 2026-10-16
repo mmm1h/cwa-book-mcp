@@ -1,6 +1,6 @@
 # 当前实现验证
 
-以下仅为 Node.js/TypeScript 实现的证据，更新时间 2026-10-15。发布提交 [c8db4aa](https://github.com/mmm1h/cwa-book-mcp/commit/c8db4aa2dcfd3f83451775c38ad9ac1c4f3bc160) 的 [Node acceptance](https://github.com/mmm1h/cwa-book-mcp/actions/runs/38723235707) 全部 20 项通过，覆盖当前 47 个行为测试。目标 CWA 上传和真实书源获取闭环均已实测通过；0.1.0 已公开发布，公共 registry 的空缓存安装与 stdio 验收通过。
+以下仅为 Node.js/TypeScript 实现的证据，更新时间 2026-10-16。发布提交 [c8db4aa](https://github.com/mmm1h/cwa-book-mcp/commit/c8db4aa2dcfd3f83451775c38ad9ac1c4f3bc160) 的 [Node acceptance](https://github.com/mmm1h/cwa-book-mcp/actions/runs/38723235707) 全部 20 项通过，覆盖当前 47 个行为测试。目标 CWA 上传和真实书源获取闭环均已实测通过；0.1.0 已公开发布，公共 registry 的空缓存安装与 stdio 验收通过。
 
 | 项目                                               | 实际结果                                                                                                  |
 | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
@@ -45,6 +45,31 @@ CWA 的入库目录不可写曾导致 HTTP 200 和 location 同时伴随排队�
 
 私有 `download-results.json`、`automatic-domain-results.json` 和 `live-source-cwa-results.json` 分别记录独立下载与完整获取验收，不随仓库分发。CWA 处理后的文件可以与源文件具有不同长度和摘要，下载完整性以实际 CWA 文件验证为准。可空、多值书号问题已有回归；入口故障切换、缓存/维护源失效和密码/额度/验证码边界由模拟测试验证，未把所有公开入口都描述为已实测登录。
 
+## 用户 MCPHub 现场验证
+
+2026-10-16，通过用户已接入的 MCPHub 调用五个工具。CWA 搜索、已有书获取、get_task 和下载票据生成通过；书源获取约 11 秒达到 ready，源文件 353,490 字节，CWA 回读 348,728 字节，通过格式与摘要验证。同 request_id 返回原任务，没有重复获取或提交。
+
+upload_book 的准备与刷新票据通过；该任务未接收文件，验收后已取消。返回的文件入口为远端进程的 127.0.0.1 动态端口，从测试 Agent 执行真实 GET/PUT 均为 ECONNREFUSED。因此本次未验证 Hub 的文件下载与本地附件上传闭环；不能将五工具可调用等同于文件链路可达。未修改生产配置，已入库记录保留。私有报告为 `.work/hub-20261016/results.json`。
+
+## OPDS 直连验证与上游边界
+
+2026-10-16，使用同一目标 CWA v4.0.8 的既有 HTTPS 入口，完成十项 OPDS/网页登录探测；未上传书籍或修改配置。
+
+| 验证                      | 实际结果                                                                                                            |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| 匿名 OPDS 搜索、下载      | 均为 401，带 Basic challenge                                                                                        |
+| Basic 认证搜索、下载      | 均为 200；从 feed 获取同源 acquisition URL；实际 EPUB 348,728 字节，通过 ZIP/CRC/OPF，SHA-256 与 Hub ready 验证一致 |
+| 上游 Range                | 206，返回前 1,024 字节；这是 CWA 的能力，本程序签名网关仍返回 416                                                   |
+| 网页书籍页与下载          | 匿名书籍页 302 到登录页；网页登录后书籍页与下载均为 200；下载长度、摘要与 OPDS 一致                                 |
+| 仅用网页 Cookie 下载 OPDS | 401；仅网页 Cookie 不足以认证 OPDS                                                                                  |
+| 不存在的书籍              | 404                                                                                                                 |
+
+feed 的 length 为 348,685，实际 Content-Length 和文件均为 348,728；已记录差异，不将其当作传输损坏。当前实现的完整性校验使用下载响应和实际文件，不依赖 feed length。私有探测结果为 `.work/opds-research/direct-probe.json`。
+
+[CWA feed 模板](https://github.com/crocodilestick/Calibre-Web-Automated/blob/3ce7bf80c8c66485eec7218c6b6c3fef8e6e6ba5/cps/templates/feed.xml#L76) 的长度取自库内记录，[下载实现](https://github.com/crocodilestick/Calibre-Web-Automated/blob/3ce7bf80c8c66485eec7218c6b6c3fef8e6e6ba5/cps/helper.py#L1219) 可在导出时嵌入元数据；本次未更改设置以追查差异的具体成因。上游 [#1340](https://github.com/crocodilestick/Calibre-Web-Automated/issues/1340) 报告 v4.0.6 导出摘要未记录，[#1146](https://github.com/crocodilestick/Calibre-Web-Automated/issues/1146) 报告目录更新时间不更新；两项仍开放，但所审计 v4.0.8 源码已有导出后摘要记录逻辑，不能把旧版报告直接视为目标实例故障。
+
+结论：CWA 现有入口足以提供直连下载，额外签名网关不是 OPDS 的要求；自动交付仍取决于客户端认证及保存文件的能力。[下一版方案](../PLAN.md#opds-直接交付评估待实现) 尚未实现；本次没有验收阅读器界面、手机浏览器交互或远端 Agent 自动认证下载。
+
 ## 资源观测
 
 同一 CI 在 Node 24.21.0 下完成 1 GiB 文件上传、模拟 CWA 回读/验证及 HTTP 下载，并执行 50 个顺序任务、保留 1000 条缓存记录。
@@ -70,4 +95,4 @@ CI 定义位于 [.github/workflows/ci.yml](../.github/workflows/ci.yml)：12 个
 
 后续自动发布仍需在 npm 配置本仓库的 trusted publisher，并建立 GitHub npm environment；本次首发为维护者交互发布，不宣称已生成 OIDC/provenance 证明。
 
-MCPHub 网络、反代上传限制、远端 Agent 的 PUT/GET 能力，以及手机/网页到 Hub 的实际访问仍需验证。本机目标 CWA 闭环和隔离客户端兼容性不替代这些部署验收。
+MCPHub 的工具通路已现场验证；签名文件入口可达性、反代上传限制、远端 Agent 的 PUT/GET，以及手机/网页实际操作仍待验收。OPDS 直连已验证服务端和认证边界，其客户端自动认证/保存与下一版交付接口仍待验收。

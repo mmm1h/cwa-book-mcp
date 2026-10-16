@@ -24,7 +24,7 @@
 | STATE_DIR                           | 自动私有用户数据目录；必须为本地可持久化磁盘              |
 | INSTANCE_ID                         | default；多个独立客户端使用不同值                         |
 | FILE_HOST、FILE_PORT                | 127.0.0.1、0（动态端口）                                  |
-| PUBLIC_BASE_URL                     | 本机默认自动生成；远端 Agent 可达的文件入口 URL           |
+| PUBLIC_BASE_URL                     | 本机默认自动生成；本程序签名文件入口，须为 Agent 可达 URL |
 | ZLIBRARY_BASE_URL                   | 可选固定入口；省略时根据已配置的书源认证自动发现与切换    |
 | ZLIBRARY_EMAIL、ZLIBRARY_PASSWORD   | 邮箱密码登录方式，须成对设置                              |
 | ZLIBRARY_USER_ID、ZLIBRARY_USER_KEY | 已有 remix 会话方式，须成对设置；与邮箱方式互斥           |
@@ -50,7 +50,18 @@ CWA_USERNAME、CWA_PASSWORD 和四个 ZLIBRARY 认证变量均支持同名 `_FIL
 
 先保证标准 OPDS 搜索和下载可用。写入前确认账号上传权限、标准登录/CSRF、允许的 EPUB/PDF 输入、目标转换格式与重复处理设置；本程序不会自动修改它们。转换属于 CWA；已有记录缺少目标格式时会受阻，不通过覆盖已有格式触发转换。
 
-远端使用固定 FILE_PORT 和 PUBLIC_BASE_URL，例如 `https://example.invalid/cwa-books`。反代转发至本进程的文件端口，可以保留或去掉该前缀；须允许完整 PUT/GET、准确请求长度和足够的上传大小/超时。PUBLIC_BASE_URL 与动态端口不能混用。文件链接中的 localhost 永远指向访问者自身，不能直接交给其他设备。
+**当前 0.1.0：** get_download_url 返回本程序的签名文件链接；程序在内部通过 CWA OPDS 下载，再转发给调用方。远端 Agent 使用这个链接或 upload_book 的 PUT 时，仍须能访问本程序文件入口。
+
+CWA 已有入口可直接提供下载，不需为 OPDS 另开端口：
+
+| 使用方                            | CWA 入口与认证                                                                                                       |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| OPDS 阅读器或支持认证下载的 Agent | 从 feed 的 acquisition 链接下载，例如 `https://example.invalid/opds/download/123/epub/`；在客户端配置 CWA Basic 认证 |
+| 浏览器用户                        | 打开 CWA 书籍页，例如 `https://example.invalid/book/123`，按正常网页登录后使用下载按钮                               |
+
+普通网页 Cookie 在目标实例上不能用于 OPDS 下载；也不能假设 MCP env 的账号会由浏览器或下游 Agent 自动使用。URL 不嵌入凭据，示例路径需保留实际反代子路径。MCP 工具自动返回上述入口的改动仍待实现，见 [OPDS 交付方案](../PLAN.md#opds-直接交付评估待实现)；OPDS 直连不替代 upload_book 的本地附件上传。
+
+当前签名网关在远端使用时配置固定 FILE_PORT 和 PUBLIC_BASE_URL，例如 `https://example.invalid/cwa-books`。反代转发至本进程的文件端口，可以保留或去掉该前缀；须允许完整 PUT/GET、准确请求长度和足够的上传大小/超时。PUBLIC_BASE_URL 与动态端口不能混用。文件链接中的 localhost 永远指向访问者自身，不能直接交给其他设备。
 
 文件接口只接受限时签名链接。下载前先把 CWA 文件流式验证到私有临时目录，再流式传给调用者，因此需要磁盘空间，首字节有验证延迟。验证文件随后删除；本进程不建立另一份持久书库。单次整文件传输不支持 Range 或断点续传，Agent 需具有实际 PUT/GET 文件能力。
 
