@@ -98,8 +98,10 @@ EOF、SIGINT、SIGTERM 会关闭本进程。重启后核对已提交任务、恢
 
 默认发布到 latest：交互发布执行 `npm publish --access public --tag latest`，GitHub 发布工作流也默认 latest。仅在明确要求预览版本时选择 next。同一已发布版本只调整标签，不重复发布。公开发布与验收状态见 [validation](validation.md)。
 
-交互发布使用已验证邮箱、已启用 2FA 的账号执行 `npm login`；默认浏览器授权，终端密码登录也可能要求一次性验证。包名变更时须同步所有示例。
+交互发布使用已验证邮箱、已启用 2FA 的账号执行 `npm login`。凭据写入用户 .npmrc，但登录会话有效期为两小时；发布仍要求 2FA，不能靠保存文件永久登录。包名变更时须同步所有示例。
 
-自动发布须在 npm 为本仓库的 publish.yml 配置 GitHub Actions trusted publisher，并建立 npm environment。该工作流使用 OIDC/provenance，要求当前提交的完整 acceptance 成功，不保存长期 npm 令牌。交互发布也须先通过同样验收。在对应发布提交上，以 `PUBLISHED_PACKAGE_SPEC=cwa-book-mcp@0.3.0` 运行 `npm run test:package`，核对公共包 integrity，再验证空缓存安装、六工具、匿名原文件交付及重启。真实书源和目标部署边界见 [validation](validation.md)。
+自动发布使用 GitHub Actions 的 Publish npm 工作流，默认 latest，要求当前提交完整 acceptance 成功。npm trusted publisher 对应 mmm1h/cwa-book-mcp、工作流文件名 publish.yml、GitHub environment npm，并允许直接 npm publish；该绑定已通过 0.3.0 首次发布验证。后续使用 OIDC/provenance，不保存长期 npm 令牌，也不依赖本机 npm login。npm 接收后可能延迟公开，工作流仅针对公共版本元数据 E404 限时等待；超时先核对 registry，不盲目重发。
 
-参考：[npm 登录](https://docs.npmjs.com/cli/v11/commands/npm-login)、[npm 2FA](https://docs.npmjs.com/about-two-factor-authentication)、[npm trusted publishers](https://docs.npmjs.com/trusted-publishers)、[npm shrinkwrap](https://docs.npmjs.com/cli/v11/configuring-npm/npm-shrinkwrap-json)、[MCPHub 配置](https://docs.mcphub.app/configuration/mcp-settings)、[VS Code MCP](https://code.visualstudio.com/docs/copilot/customization/mcp-servers)。
+交互发布也须先通过同样验收。在对应发布提交上，以 `PUBLISHED_PACKAGE_SPEC=cwa-book-mcp@0.3.0` 运行 `npm run test:package`，核对公共包 integrity，再验证空缓存安装、六工具、匿名原文件交付及重启。真实书源和目标部署边界见 [validation](validation.md)。
+
+参考：[npm 登录会话规则](https://github.blog/changelog/2025-12-09-npm-classic-tokens-revoked-session-based-auth-and-cli-token-management-now-available/)、[npm 2FA](https://docs.npmjs.com/about-two-factor-authentication)、[npm trusted publishers](https://docs.npmjs.com/trusted-publishers)、[npm shrinkwrap](https://docs.npmjs.com/cli/v11/configuring-npm/npm-shrinkwrap-json)、[MCPHub 配置](https://docs.mcphub.app/configuration/mcp-settings)、[VS Code MCP](https://code.visualstudio.com/docs/copilot/customization/mcp-servers)。

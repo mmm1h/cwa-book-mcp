@@ -28,7 +28,9 @@
 - 完整 [Node acceptance](https://github.com/mmm1h/cwa-book-mcp/actions/workflows/ci.yml)：Node 22.19/24 × Windows/macOS/Linux x64/arm64，Linux musl、原版隔离 CWA、MCPHub/Claude 客户端与流式资源测试。
 - npm audit --omit=dev；发布 latest 后设置 PUBLISHED_PACKAGE_SPEC=cwa-book-mcp@0.3.0，再运行实际公共包验收，核对 registry integrity 与待发布安装包完全一致。
 
-0.3.0 的 CI、实际安装包和公共 registry 验收结果在对应 GitHub Release 记录；未完成这些检查前不得把源码构建描述为公开发布。自动 OIDC 发布还需 npm trusted publisher 配置；交互发布使用维护者本人官方浏览器授权及 2FA，不保存长期令牌。
+2026-10-16，0.3.0 已通过 GitHub Actions OIDC 发布到 latest，源码提交为 9dc21a2b180faa06f7a796f455962ea6cd507b29。[完整 CI](https://github.com/mmm1h/cwa-book-mcp/actions/runs/38860766069) 的 20 个作业全部通过。npm 接收发布后延迟公开，发布工作流的即时 registry 检查曾返回 E404；包可用后，在 Windows x64 / Node 25.5.0 重新运行公共包验收通过：空缓存、中文空格目录、禁用安装脚本、六工具、匿名原文件、认证 OPDS、签名网关与两次重启。冷安装约 49 秒，私有输出为 .work/public-package-0.3.0-retry.log。工作流已补上仅针对 E404 的限时等待，不重试发布操作。
+
+公共包为 118,075 字节，SHA-256 为 60774316a17f3bb223a08edf03c2c2159d146ea985e18955d483cfa53141902f；registry integrity 与本地规范化安装包完全一致，GitHub Release 附件使用同一公共包。Trusted publisher 已通过首次发布实际验证；后续由发布工作流认证。交互 npm login 使用短期会话，发布仍可能要求账号本人 2FA。
 
 ## CWA 与客户端边界
 

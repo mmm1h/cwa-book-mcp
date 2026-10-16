@@ -12,6 +12,7 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     environment: npm
     permissions:
       contents: read
@@ -35,6 +36,22 @@ jobs:
       - run: npm run test:package
       - run: npm audit --omit=dev --audit-level=high
       - run: npm publish --provenance --access public --tag ${{ inputs.tag }}
+      - name: Wait for public registry metadata
+        run: |
+          package_spec=$(node -p "const p=require('./package.json'); p.name+'@'+p.version")
+          registry_result="$RUNNER_TEMP/npm-public-version.json"
+          for attempt in {1..30}; do
+            if npm view "$package_spec" dist.integrity --json --registry=https://registry.npmjs.org --prefer-online --fetch-retries=0 --fetch-timeout=10000 --logs-max=0 > "$registry_result"; then
+              exit 0
+            fi
+            node -e "const fs=require('node:fs'); const result=JSON.parse(fs.readFileSync(process.argv[1],'utf8')); if(result.error?.code!=='E404') process.exit(1)" "$registry_result"
+            if [ "$attempt" -eq 30 ]; then
+              echo "Published version did not become available in time. Verify the registry before retrying publication."
+              exit 1
+            fi
+            echo "Waiting for npm processing ($attempt/30)"
+            sleep 10
+          done
       - name: Public registry smoke
         run: |
           package_version=$(node -p "require('./package.json').version")
