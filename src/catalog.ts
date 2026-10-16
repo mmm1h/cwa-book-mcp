@@ -3,6 +3,7 @@ import {
   language,
   normalize,
   publicError,
+  publicBook,
   type Book,
   type Searcher,
   type SearchInput,
@@ -29,7 +30,7 @@ export class Catalog {
     return this.store.cached<Book>('book', key);
   }
   expose(book: Book): Book & { candidate_id: string } {
-    return { ...book, candidate_id: this.store.cache('book', book) };
+    return { ...publicBook(book), candidate_id: this.store.cache('book', book) };
   }
   async search(input: SearchInput, signal?: AbortSignal): Promise<Record<string, unknown>> {
     const hash = digest({

@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'node:http';
+import { createHash } from 'node:crypto';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 
@@ -18,9 +19,46 @@ const cwd = join(temp, 'empty cwd'),
   cache = join(temp, 'empty cache');
 await mkdir(cwd);
 await mkdir(cache);
-const fake = createServer((_req, res) => {
-  res.setHeader('content-type', 'application/atom+xml');
-  res.end('<feed xmlns="http://www.w3.org/2005/Atom"></feed>');
+const epub = await readFile(new URL('../testdata/synthetic.epub', import.meta.url));
+const sha256 = createHash('sha256').update(epub).digest('hex');
+const uuid = '123e4567-e89b-42d3-a456-426614174000';
+const authorization = 'Basic ' + Buffer.from('synthetic:synthetic').toString('base64');
+const fake = createServer((req, res) => {
+  if (req.headers.authorization !== authorization) {
+    res.writeHead(401);
+    res.end();
+    return;
+  }
+  const path = new URL(req.url, 'http://localhost').pathname;
+  if (path === '/opds/search') {
+    res.setHeader('content-type', 'application/atom+xml');
+    res.end(
+      '<feed xmlns="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/terms/">' +
+        '<entry><id>urn:uuid:' +
+        uuid +
+        '</id><title>中文 packed smoke</title><dc:language>zh</dc:language>' +
+        '<link rel="http://opds-spec.org/acquisition" href="download/1/epub/" type="application/epub+zip" length="1"/>' +
+        '</entry></feed>',
+    );
+  } else if (path === '/ajax/book/' + uuid) {
+    res.setHeader('content-type', 'application/json');
+    res.end(
+      JSON.stringify({
+        application_id: '1',
+        uuid,
+        title: '中文 packed smoke',
+        authors: [],
+        languages: ['zh'],
+        formats: ['EPUB'],
+      }),
+    );
+  } else if (path === '/opds/download/1/epub/') {
+    res.writeHead(200, { 'content-type': 'application/epub+zip', 'content-length': epub.length });
+    res.end(epub);
+  } else {
+    res.writeHead(404);
+    res.end();
+  }
 });
 await new Promise((resolve) => fake.listen(0, '127.0.0.1', resolve));
 const env = {
@@ -28,6 +66,7 @@ const env = {
   CWA_BASE_URL: 'http://127.0.0.1:' + fake.address().port,
   CWA_USERNAME: 'synthetic',
   CWA_PASSWORD: 'synthetic',
+  CWA_WRITE_ENABLED: 'false',
   STATE_DIR: join(temp, 'state'),
 };
 const base = ['exec', '--yes', '--ignore-scripts', '--no-audit', '--no-fund', '--cache', cache];
@@ -89,7 +128,8 @@ try {
   });
   assert.equal(version.stdout.trim(), packed.version);
   const coldMs = performance.now() - before;
-  let stderr = '';
+  let stderr = '',
+    taskId;
   for (let n = 0; n < 2; n++) {
     const transport = new StdioClientTransport({
       command: process.execPath,
@@ -110,7 +150,64 @@ try {
       arguments: { query: '中文 packed smoke' },
     });
     assert.equal(response.isError, undefined);
-    assert.deepEqual(response.structuredContent.candidates, []);
+    assert.equal(response.structuredContent.candidates.length, 1);
+    if (n === 0) {
+      const acquired = await client.callTool({
+        name: 'acquire_book',
+        arguments: {
+          request_id: 'packed-direct',
+          candidate_id: response.structuredContent.candidates[0].candidate_id,
+          required_format: 'epub',
+        },
+      });
+      assert(!acquired.isError);
+      taskId = acquired.structuredContent.id;
+    }
+    const deadline = Date.now() + 10000;
+    for (;;) {
+      const task = await client.callTool({ name: 'get_task', arguments: { task_id: taskId } });
+      assert(!task.isError);
+      if (task.structuredContent.state === 'ready') break;
+      assert(Date.now() < deadline, 'Packed task did not become ready');
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    const direct = await client.callTool({
+      name: 'get_download_url',
+      arguments: { task_id: taskId },
+    });
+    assert(!direct.isError);
+    const link = direct.structuredContent;
+    assert.equal(link.delivery, 'opds');
+    assert.equal(link.url, env.CWA_BASE_URL + '/opds/download/1/epub/');
+    assert.equal(link.web_url, env.CWA_BASE_URL + '/book/1');
+    assert.deepEqual(link.authentication, { scheme: 'basic' });
+    assert.equal(link.expires_at, undefined);
+    assert.equal(link.verification.sha256, sha256);
+    assert.equal(link.verification.size_bytes, epub.length);
+    const download = await fetch(link.url, { headers: { authorization } });
+    assert.equal(download.status, 200);
+    assert.deepEqual(Buffer.from(await download.arrayBuffer()), epub);
+    const gateway = await client.callTool({
+      name: 'get_download_url',
+      arguments: { task_id: taskId, delivery: 'gateway' },
+    });
+    assert(!gateway.isError);
+    assert.equal(gateway.structuredContent.delivery, 'gateway');
+    assert.equal(typeof gateway.structuredContent.expires_at, 'string');
+    const signedDownload = await fetch(gateway.structuredContent.url);
+    assert.equal(signedDownload.status, 200);
+    assert.deepEqual(Buffer.from(await signedDownload.arrayBuffer()), epub);
+    const upload = await client.callTool({
+      name: 'upload_book',
+      arguments: {
+        request_id: 'packed-write-disabled',
+        title: 'synthetic',
+        filename: 'book.epub',
+        size_bytes: epub.length,
+        required_format: 'epub',
+      },
+    });
+    assert.equal(upload.structuredContent.error.code, 'WRITE_DISABLED');
     await client.close();
   }
   const key = await readFile(join(env.STATE_DIR, 'ticket.key'));
@@ -135,6 +232,8 @@ try {
       empty_cache: true,
       install_scripts: false,
       stdio_tools: 5,
+      opds_direct_download: true,
+      signed_gateway_download: true,
       cached_restarts: 2,
       state_persistent: true,
     }),

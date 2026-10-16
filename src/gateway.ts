@@ -7,6 +7,13 @@ import { fail, formatSchema, publicError, type Task } from './domain.js';
 import type { Config } from './config.js';
 import type { Tasks } from './tasks.js';
 
+export const downloadSchema = z
+  .object({
+    task_id: z.string().uuid(),
+    delivery: z.enum(['opds', 'gateway']).default('opds'),
+  })
+  .strict();
+
 const ticketSchema = z
   .object({
     purpose: z.enum(['upload', 'download']),
@@ -138,13 +145,26 @@ export class Gateway {
       },
     };
   }
-  async downloadUrl(taskId: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
+  async downloadUrl(
+    taskId: string,
+    delivery: 'opds' | 'gateway' = 'opds',
+    signal?: AbortSignal,
+  ): Promise<Record<string, unknown>> {
     const task = this.tasks.store.get(taskId);
     if (task.state !== 'ready' || !task.cwa) fail('TASK_NOT_READY', '任务尚未验证完成');
     const verified = await this.tasks.verifiedFile(task.cwa, task.required_format, signal);
     try {
       if (this.tasks.store.get(taskId).state !== 'ready')
         fail('TASK_NOT_READY', '任务已取消或不再可下载');
+      if (delivery === 'opds')
+        return {
+          task_id: task.id,
+          delivery,
+          url: this.tasks.cwa.downloadUrl(verified.book, task.required_format),
+          web_url: this.tasks.cwa.webUrl(verified.book),
+          authentication: { scheme: 'basic' },
+          verification: { ...verified.info, at: Date.now() },
+        };
       const expires = Math.floor(Date.now() / 1000) + this.config.ticketSeconds;
       const ticket = this.tickets.sign({
         purpose: 'download',
@@ -156,6 +176,7 @@ export class Gateway {
       });
       return {
         task_id: task.id,
+        delivery,
         url: this.baseUrl + '/files/download/' + task.id + '?ticket=' + ticket,
         expires_at: new Date(expires * 1000).toISOString(),
         ...verified.info,

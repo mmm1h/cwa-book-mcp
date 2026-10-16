@@ -1,6 +1,6 @@
 {
   "name": "cwa-book-mcp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Search, acquire, upload and download CWA library books over stdio MCP",
   "type": "module",
   "license": "MIT",

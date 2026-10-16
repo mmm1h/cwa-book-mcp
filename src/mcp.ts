@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { publicError, searchSchema } from './domain.js';
 import { acquireSchema, uploadSchema } from './tasks.js';
+import { downloadSchema } from './gateway.js';
 import type { App } from './app.js';
 import { VERSION } from './version.js';
 
@@ -82,12 +83,13 @@ export function createMcp(app: App): McpServer {
     'get_download_url',
     {
       description:
-        '为 ready 任务重新核验 CWA 身份和文件，返回限时 GET 地址。仅从 CWA 下载；不支持 Range。',
-      inputSchema: z.object({ task_id: z.string().uuid() }).strict(),
+        '为 ready 任务在服务端完成书籍 ID/UUID、目标格式和文件完整性校验，默认返回该书的 OPDS 下载链接 url 和网页入口 web_url。客户端无需重复校验：OPDS 阅读器使用已配置的 CWA Basic 认证下载，浏览器打开 web_url 按正常网页登录并下载。verification 仅记录服务端本次校验结果。delivery:gateway 返回限时签名 GET 链接，需要可达的本程序文件入口，不支持 Range。',
+      inputSchema: downloadSchema,
       outputSchema: output,
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
-    (input, ctx) => run(() => app.gateway.downloadUrl(input.task_id, ctx.mcpReq.signal)),
+    (input, ctx) =>
+      run(() => app.gateway.downloadUrl(input.task_id, input.delivery, ctx.mcpReq.signal)),
   );
   return server;
 }

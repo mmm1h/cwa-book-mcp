@@ -90,11 +90,16 @@ export function book(overrides: Partial<Book> = {}): Book {
     ...overrides,
   };
 }
-export async function mockCwa() {
+export async function mockCwa(basePath = '') {
   const state = {
     books: [] as Book[],
     uploads: 0,
     downloadCount: 0,
+    downloadStatus: 200,
+    downloadType: undefined as string | undefined,
+    downloadRedirect: undefined as string | undefined,
+    acquisitionHref: undefined as string | undefined,
+    opdsLength: epub.length,
     dropUpload: false,
     hangUpload: false,
     rejectUpload: false,
@@ -109,6 +114,12 @@ export async function mockCwa() {
   };
   const endpoint = await listen(async (req, res) => {
     const u = new URL(req.url!, 'http://localhost');
+    if (!u.pathname.startsWith(basePath + '/')) {
+      res.writeHead(404);
+      res.end();
+      return;
+    }
+    u.pathname = u.pathname.slice(basePath.length);
     if (u.pathname.startsWith('/opds/') || u.pathname.startsWith('/ajax/')) {
       if (
         req.headers.authorization !==
@@ -138,17 +149,21 @@ export async function mockCwa() {
             b.authors.map((a) => '<author><name>' + xml(a) + '</name></author>').join('') +
             '<dc:language>' +
             b.language +
-            '</dc:language><link rel="http://opds-spec.org/image" href="/opds/cover/' +
+            '</dc:language><link rel="http://opds-spec.org/image" href="' +
+            basePath +
+            '/opds/cover/' +
             b.id +
             '"/>' +
             b.formats
               .map(
                 (f) =>
-                  '<link rel="http://opds-spec.org/acquisition" href="/opds/download/' +
-                  b.id +
-                  '/' +
-                  f +
-                  '/"/>',
+                  '<link rel="http://opds-spec.org/acquisition" href="' +
+                  xml(
+                    state.acquisitionHref || basePath + '/opds/download/' + b.id + '/' + f + '/',
+                  ) +
+                  '" length="' +
+                  state.opdsLength +
+                  '"/>',
               )
               .join('') +
             '</entry>',
@@ -185,10 +200,19 @@ export async function mockCwa() {
     }
     if (u.pathname.startsWith('/opds/download/')) {
       state.downloadCount++;
+      if (state.downloadRedirect || state.downloadStatus !== 200) {
+        res.writeHead(
+          state.downloadRedirect ? 302 : state.downloadStatus,
+          state.downloadRedirect ? { location: state.downloadRedirect } : {},
+        );
+        res.end();
+        return;
+      }
       const f = u.pathname.split('/')[4];
       const data = state.badFile ? Buffer.from('not a valid book') : f === 'pdf' ? pdf : epub;
       res.writeHead(200, {
-        'content-type': f === 'pdf' ? 'application/pdf' : 'application/epub+zip',
+        'content-type':
+          state.downloadType || (f === 'pdf' ? 'application/pdf' : 'application/epub+zip'),
         'content-length': data.length,
       });
       res.end(data);
@@ -223,7 +247,7 @@ export async function mockCwa() {
         }
         res.writeHead(302, {
           'set-cookie': 'session=synthetic; Path=/; HttpOnly',
-          location: '/me',
+          location: basePath + '/me',
         });
         res.end();
         return;
@@ -264,7 +288,7 @@ export async function mockCwa() {
     res.writeHead(404);
     res.end();
   });
-  return { ...endpoint, state };
+  return { ...endpoint, url: endpoint.url + basePath, state };
 }
 export async function testConfig(base: string, extra: NodeJS.ProcessEnv = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'cwa 测试 space-'));

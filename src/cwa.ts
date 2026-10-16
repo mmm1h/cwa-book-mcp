@@ -96,14 +96,24 @@ export class Cwa {
           rel = tag.attributes.rel?.value || '';
         if (!href) return;
         const target = new URL(href, pos.url);
-        if (target.origin !== new URL(this.config.cwaUrl).origin)
-          fail('ORIGIN_BLOCKED', 'CWA OPDS 链接跨来源');
+        if (
+          target.origin !== new URL(this.config.cwaUrl).origin ||
+          target.username ||
+          target.password
+        )
+          fail('ORIGIN_BLOCKED', 'CWA OPDS 链接跨来源或包含凭据');
         if (!current && rel === 'next') next = target.href;
         if (current) {
           const match = /\/download\/(\d+)\/([a-zA-Z0-9]+)\/?$/.exec(target.pathname);
           if (rel.includes('acquisition') && match) {
             current.id = match[1]!;
-            current.formats.push(match[2]!.toLowerCase());
+            const format = match[2]!.toLowerCase();
+            current.formats.push(format);
+            if (format === 'epub' || format === 'pdf') {
+              if (target.search || target.hash)
+                fail('UPSTREAM_INVALID', 'CWA OPDS 下载链接不得包含查询或片段');
+              (current.acquisition_urls ??= {})[format] = target.href;
+            }
           }
           const cover = /\/cover(?:_[^/]*)?\/(\d+)/.exec(target.pathname);
           if (!current.id && cover) current.id = cover[1]!;
@@ -174,10 +184,26 @@ export class Cwa {
       formats: d.formats.map((s) => s.toLowerCase()),
     });
   }
-  async open(book: Book, format: Format, signal?: AbortSignal): Promise<Response> {
+  downloadUrl(book: Book, format: Format): string {
     if (!/^\d+$/.test(book.id) || !book.formats.includes(format))
       fail('FORMAT_UNAVAILABLE', 'CWA 尚无所需格式');
-    const r = await this.http.send('/opds/download/' + book.id + '/' + format + '/', {
+    const url = new URL(
+      book.acquisition_urls?.[format] ||
+        this.http.url('/opds/download/' + book.id + '/' + format + '/'),
+    );
+    if (url.origin !== new URL(this.config.cwaUrl).origin || url.username || url.password)
+      fail('ORIGIN_BLOCKED', 'CWA OPDS 链接跨来源或包含凭据');
+    const match = /\/download\/(\d+)\/([a-zA-Z0-9]+)\/?$/.exec(url.pathname);
+    if (url.search || url.hash || match?.[1] !== book.id || match[2]!.toLowerCase() !== format)
+      fail('UPSTREAM_INVALID', 'CWA OPDS 下载链接与书籍或格式不符');
+    return url.href;
+  }
+  webUrl(book: Book): string {
+    if (!/^\d+$/.test(book.id)) fail('BOOK_IDENTITY_CHANGED', 'CWA 候选缺少有效 ID');
+    return this.http.url('/book/' + book.id);
+  }
+  async open(book: Book, format: Format, signal?: AbortSignal): Promise<Response> {
+    const r = await this.http.send(this.downloadUrl(book, format), {
       headers: { authorization: this.basic },
       signal,
       cookies: false,

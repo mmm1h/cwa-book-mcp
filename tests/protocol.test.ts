@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { fetch } from 'undici';
-import { epub, mockCwa, testConfig, until } from './fixtures.js';
+import { book, epub, mockCwa, testConfig, until } from './fixtures.js';
 import { Store } from '../src/store.js';
 
 const cleanups: (() => Promise<unknown>)[] = [];
@@ -73,6 +73,67 @@ test('real stdio child lists five tools, returns structured/text results and exi
   store.close();
   expect(stderr()).toBe('');
 });
+test('stdio defaults to authenticated CWA OPDS links and keeps signed gateway delivery explicit', async () => {
+  const { cwa, env } = await setup();
+  cwa.state.books = [book()];
+  const { client, stderr } = await connect(env);
+  const search = await client.callTool({
+    name: 'search_books',
+    arguments: { query: '合成测试书' },
+  });
+  const candidate = (search.structuredContent as { candidates: { candidate_id: string }[] })
+    .candidates[0]!;
+  const started = await client.callTool({
+    name: 'acquire_book',
+    arguments: {
+      request_id: 'stdio-direct',
+      candidate_id: candidate.candidate_id,
+      required_format: 'epub',
+    },
+  });
+  const taskId = (started.structuredContent as { id: string }).id;
+  await until(async () => {
+    const task = await client.callTool({ name: 'get_task', arguments: { task_id: taskId } });
+    return (task.structuredContent as { state?: string })?.state === 'ready';
+  });
+  const direct = await client.callTool({
+    name: 'get_download_url',
+    arguments: { task_id: taskId },
+  });
+  expect(direct.isError).not.toBe(true);
+  expect(direct.structuredContent).toMatchObject({
+    delivery: 'opds',
+    url: cwa.url + '/opds/download/1/epub/',
+    web_url: cwa.url + '/book/1',
+    authentication: { scheme: 'basic' },
+    verification: { size_bytes: epub.length },
+  });
+  expect((direct.structuredContent as Record<string, unknown>)?.expires_at).toBeUndefined();
+  expect(direct.content).toContainEqual({
+    type: 'text',
+    text: JSON.stringify(direct.structuredContent),
+  });
+  const signed = await client.callTool({
+    name: 'get_download_url',
+    arguments: { task_id: taskId, delivery: 'gateway' },
+  });
+  expect(signed.isError).not.toBe(true);
+  expect(signed.structuredContent).toMatchObject({
+    delivery: 'gateway',
+    expires_at: expect.any(String),
+    size_bytes: epub.length,
+  });
+  const response = await fetch((signed.structuredContent as { url: string }).url);
+  expect(response.status).toBe(200);
+  expect(Buffer.from(await response.arrayBuffer())).toEqual(epub);
+  const invalid = await client.callTool({
+    name: 'get_download_url',
+    arguments: { task_id: taskId, delivery: 'unknown' },
+  });
+  expect(invalid.isError).toBe(true);
+  expect(stderr()).toBe('');
+});
+
 test('SIGKILL after CWA receives a submission recovers without reuploading', async () => {
   const { cwa, env, temp } = await setup();
   cwa.state.hangUpload = true;

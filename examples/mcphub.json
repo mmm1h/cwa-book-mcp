@@ -6,12 +6,9 @@
       "args": ["-y", "cwa-book-mcp@latest"],
       "perSessionClient": false,
       "env": {
-        "CWA_BASE_URL": "http://cwa:8083",
+        "CWA_BASE_URL": "https://example.invalid",
         "CWA_USERNAME": "<CWA_USER>",
-        "CWA_PASSWORD": "<CWA_PASSWORD>",
-        "FILE_HOST": "0.0.0.0",
-        "FILE_PORT": "8765",
-        "PUBLIC_BASE_URL": "https://example.invalid/cwa-books"
+        "CWA_PASSWORD": "<CWA_PASSWORD>"
       }
     }
   }

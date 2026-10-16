@@ -60,7 +60,7 @@ try {
     }
     assert.equal(result.state, 'ready', JSON.stringify(result.error));
     assert(result.submitted_at, 'Isolated acceptance must exercise actual ingestion');
-    const link = await app.gateway.downloadUrl(task.id);
+    const link = await app.gateway.downloadUrl(task.id, 'gateway');
     const response = await fetch(link.url);
     assert.equal(response.status, 200);
     let bytes = 0;

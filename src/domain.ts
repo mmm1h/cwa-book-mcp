@@ -12,10 +12,15 @@ export const bookSchema = z.object({
   authors: z.array(z.string().max(256)).max(16).default([]),
   language: z.string().max(64).default('unknown'),
   formats: z.array(z.string().max(32)).max(16),
+  acquisition_urls: z.partialRecord(formatSchema, z.string().url().max(8192)).optional(),
   isbn: z.string().max(64).optional(),
   size_bytes: z.number().int().positive().optional(),
 });
 export type Book = z.infer<typeof bookSchema>;
+export function publicBook(book: Book): Omit<Book, 'acquisition_urls'> {
+  const { acquisition_urls: _urls, ...metadata } = book;
+  return metadata;
+}
 export interface Page {
   books: Book[];
   next?: string;

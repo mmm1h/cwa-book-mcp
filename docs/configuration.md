@@ -4,13 +4,13 @@
 
 ## 启动与客户端
 
-启动：`npx -y cwa-book-mcp@latest`。默认就是 stdio，无 transport 参数。开发阶段先 `npm ci && npm run build`，配置相同环境变量后运行 `node dist/cli.js`。本地 tarball 可使用 `npx -y --package ./cwa-book-mcp-0.1.0.tgz cwa-book-mcp`。
+启动：`npx -y cwa-book-mcp@latest`。默认就是 stdio，无 transport 参数。当前源码 0.2.0 尚未发布，npm latest 仍为 0.1.0；测试新行为先 `npm ci && npm run build`，配置相同环境变量后运行 `node dist/cli.js`，或使用本地 tarball：`npx -y --package ./cwa-book-mcp-0.2.0.tgz cwa-book-mcp`。
 
 - [标准 MCP 配置](../examples/local.json)：支持本地进程的桌面/CLI 客户端。
 - [MCPHub](../examples/mcphub.json)：在 Hub 主机安装 Node，用 command/args/env 导入，`perSessionClient:false` 共享单个子进程。单设备断开不终止共享任务。
 - [VS Code](../examples/vscode.json)：使用 `servers` 外层，放入工作区的 .vscode/mcp.json。
 - Claude Code：`claude mcp add-json cwa-books '<单个 server 对象>'`。Windows 上如某客户端不能直接启动 npx，使用 `command:"cmd"`、`args:["/d","/s","/c","npx","-y","cwa-book-mcp@latest"]`。
-- 手机/网页客户端连接远端 MCPHub；它们不在本机执行 npx。Hub 若运行于容器，文件端口与 CWA 网络需在该容器中可达。
+- 手机/网页客户端连接远端 MCPHub；它们不在本机执行 npx。Hub 需能访问 CWA；仅使用签名文件网关时才需为调用方配置其文件端口的可达入口。
 
 首次 npx 会下载 npm 包；离线首次启动不可用。默认使用 @latest 跟随发布渠道，升级后需重启 MCP 服务；需要锁定或回退时可改为 @0.1.0 等固定版本。应用发布编译后的 JS，运行用户不需要 TypeScript 编译器、Go、Python 或本项目容器。生产依赖无安装后下载器，安装脚本禁用也经过 tarball 验证。
 
@@ -18,8 +18,8 @@
 
 | 变量                                | 默认值 / 用途                                             |
 | ----------------------------------- | --------------------------------------------------------- |
-| CWA_BASE_URL                        | 必填；CWA 根 URL，可含反代子路径                          |
-| CWA_USERNAME、CWA_PASSWORD          | 必填；具有 OPDS 读取权限的账号                            |
+| CWA_BASE_URL                        | 必填；Hub 与下载设备均可达的 CWA URL，可含反代子路径      |
+| CWA_USERNAME、CWA_PASSWORD          | 必填；具有 OPDS 读取及下载权限的账号                      |
 | CWA_WRITE_ENABLED                   | false；由操作者确认 CWA 设置后设 true                     |
 | STATE_DIR                           | 自动私有用户数据目录；必须为本地可持久化磁盘              |
 | INSTANCE_ID                         | default；多个独立客户端使用不同值                         |
@@ -50,20 +50,22 @@ CWA_USERNAME、CWA_PASSWORD 和四个 ZLIBRARY 认证变量均支持同名 `_FIL
 
 先保证标准 OPDS 搜索和下载可用。写入前确认账号上传权限、标准登录/CSRF、允许的 EPUB/PDF 输入、目标转换格式与重复处理设置；本程序不会自动修改它们。转换属于 CWA；已有记录缺少目标格式时会受阻，不通过覆盖已有格式触发转换。
 
-**当前 0.1.0：** get_download_url 返回本程序的签名文件链接；程序在内部通过 CWA OPDS 下载，再转发给调用方。远端 Agent 使用这个链接或 upload_book 的 PUT 时，仍须能访问本程序文件入口。
+get_download_url 默认在 MCP 内部重新核对书籍 ID/UUID、目标格式与完整文件，再返回 CWA OPDS 链接 url、网页入口 web_url 和服务端校验记录 verification。客户端只需打开或保存文件，无需重复做身份、格式或摘要校验。普通 CWA 下载链接按 CWA 账号权限访问，不带本程序的过期票据。
 
 CWA 已有入口可直接提供下载，不需为 OPDS 另开端口：
 
-| 使用方                            | CWA 入口与认证                                                                                                       |
-| --------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| OPDS 阅读器或支持认证下载的 Agent | 从 feed 的 acquisition 链接下载，例如 `https://example.invalid/opds/download/123/epub/`；在客户端配置 CWA Basic 认证 |
-| 浏览器用户                        | 打开 CWA 书籍页，例如 `https://example.invalid/book/123`，按正常网页登录后使用下载按钮                               |
+远端 Hub 的 CWA_BASE_URL 使用已有 CWA 的可达 HTTPS 地址；如填容器内部的 `http://cwa:8083`，生成的直连地址也只在该网络内可用。
 
-普通网页 Cookie 在目标实例上不能用于 OPDS 下载；也不能假设 MCP env 的账号会由浏览器或下游 Agent 自动使用。URL 不嵌入凭据，示例路径需保留实际反代子路径。MCP 工具自动返回上述入口的改动仍待实现，见 [OPDS 交付方案](../PLAN.md#opds-直接交付评估待实现)；OPDS 直连不替代 upload_book 的本地附件上传。
+| 使用方                            | CWA 入口与认证                                                                                              |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| OPDS 阅读器或支持认证下载的 Agent | 使用返回的 url，例如 `https://example.invalid/opds/download/123/epub/`，配合客户端保存的 CWA Basic 认证下载 |
+| 浏览器用户                        | 打开返回的 web_url，例如 `https://example.invalid/book/123`，按正常网页登录后使用下载按钮                   |
 
-当前签名网关在远端使用时配置固定 FILE_PORT 和 PUBLIC_BASE_URL，例如 `https://example.invalid/cwa-books`。反代转发至本进程的文件端口，可以保留或去掉该前缀；须允许完整 PUT/GET、准确请求长度和足够的上传大小/超时。PUBLIC_BASE_URL 与动态端口不能混用。文件链接中的 localhost 永远指向访问者自身，不能直接交给其他设备。
+普通网页 Cookie 在目标实例上不能用于 OPDS 下载，浏览器使用 web_url。CWA 登录认证与服务端的书籍/文件校验是两回事；MCP env 的账号不会自动转交给下载客户端，返回值也不包含密码、Authorization 或 Cookie。远端 OPDS 使用 HTTPS；示例路径需保留实际反代子路径。
 
-文件接口只接受限时签名链接。下载前先把 CWA 文件流式验证到私有临时目录，再流式传给调用者，因此需要磁盘空间，首字节有验证延迟。验证文件随后删除；本进程不建立另一份持久书库。单次整文件传输不支持 Range 或断点续传，Agent 需具有实际 PUT/GET 文件能力。
+upload_book 的本地整文件 PUT 和 get_download_url 的 delivery:gateway 使用签名网关。远端使用时配置固定 FILE_PORT 和 PUBLIC_BASE_URL，例如 `https://example.invalid/cwa-books`。反代转发至本进程的文件端口，可以保留或去掉该前缀；须允许完整 PUT/GET、准确请求长度和足够的上传大小/超时。PUBLIC_BASE_URL 与动态端口不能混用。文件链接中的 localhost 永远指向访问者自身，不能直接交给其他设备。
+
+签名网关只接受限时链接。网关 GET 会先把 CWA 文件流式验证到私有临时目录，再流式传给调用者，因此需要磁盘空间，首字节有验证延迟。验证文件随后删除；本进程不建立另一份持久书库。网关单次整文件传输不支持 Range 或断点续传，Agent 需具有实际 PUT/GET 文件能力；CWA 直连的传输能力由 CWA 提供。
 
 ## 状态、诊断与恢复
 

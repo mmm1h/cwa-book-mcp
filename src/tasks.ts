@@ -8,6 +8,7 @@ import {
   id,
   language,
   publicError,
+  publicBook,
   sameBook,
   terminal,
   type Book,
@@ -88,7 +89,12 @@ export class Tasks {
   }
   private publicTask(t: Task): Record<string, unknown> {
     const { filename: _filename, expected_sha256: _expected, staged_sha256: _staged, ...rest } = t;
-    return { ...rest, choices: t.choices?.map((b) => this.catalog.expose(b)) };
+    return {
+      ...rest,
+      book: publicBook(t.book),
+      cwa: t.cwa ? publicBook(t.cwa) : undefined,
+      choices: t.choices?.map((b) => this.catalog.expose(b)),
+    };
   }
   get(taskId: string): Record<string, unknown> {
     return this.publicTask(this.store.get(taskId));

@@ -126,7 +126,7 @@ try {
   const verified = await ready(task.id);
   assert.equal(verified.verification.size_bytes, size);
   assert.equal(uploads, 1);
-  const link = await app.gateway.downloadUrl(task.id);
+  const link = await app.gateway.downloadUrl(task.id, 'gateway');
   const response = await fetch(link.url);
   assert.equal(response.status, 200);
   let received = 0;

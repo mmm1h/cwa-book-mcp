@@ -83,7 +83,7 @@ describe('book workflow', () => {
     expect(mock.state.bodies[0]!.includes(Buffer.from('Content-Type: application/epub+zip'))).toBe(
       true,
     );
-    const result = await app.gateway.downloadUrl(t.id);
+    const result = await app.gateway.downloadUrl(t.id, 'gateway');
     const get = await fetch(result.url as string);
     expect(get.status).toBe(200);
     expect(Buffer.from(await get.arrayBuffer())).toEqual(epub);
