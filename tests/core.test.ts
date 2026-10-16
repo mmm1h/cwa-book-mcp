@@ -37,6 +37,36 @@ test('exclusive state ownership, key integrity, identity isolation and transacti
   await writeFile(join(temp.config.stateDir, 'ticket.key'), 'bad');
   expect(() => new Store(temp.config.stateDir, 'one')).toThrow('密钥损坏');
 });
+test('v1 state upgrades without losing tasks, idempotency or ticket keys; unknown versions fail closed', async () => {
+  const temp = await testConfig('http://localhost');
+  cleanups.push(temp.cleanup);
+  const first = new Store(temp.config.stateDir, 'upgrade');
+  const now = Date.now();
+  const input = { request_id: 'legacy' };
+  const task = first.create('legacy', input, () => ({
+    id: randomUUID(),
+    kind: 'acquire',
+    state: 'queued',
+    required_format: 'epub',
+    book: book(),
+    created_at: now,
+    updated_at: now,
+    next_run_at: now,
+  }));
+  const key = Buffer.from(first.key);
+  first.db.prepare("UPDATE meta SET value='1' WHERE key='schema_version'").run();
+  first.close();
+  const second = new Store(temp.config.stateDir, 'upgrade');
+  expect(second.existing('legacy', input)?.id).toBe(task.id);
+  expect(second.key).toEqual(key);
+  expect(second.db.prepare("SELECT value FROM meta WHERE key='schema_version'").get()).toEqual({
+    value: '2',
+  });
+  second.db.prepare("UPDATE meta SET value='999' WHERE key='schema_version'").run();
+  second.close();
+  expect(() => new Store(temp.config.stateDir, 'upgrade')).toThrow('状态版本不兼容');
+});
+
 test('config rejects ambiguous credentials and remote URLs without stable file port', async () => {
   const env = {
     CWA_BASE_URL: 'http://localhost:8083',

@@ -50,6 +50,17 @@ function mapBook(raw: z.infer<typeof rawBook>): Book {
     size_bytes: Number.isSafeInteger(size) && size > 0 ? size : undefined,
   });
 }
+function linkExpiry(raw: string): number | undefined {
+  const value = [...new URL(raw).searchParams].find(
+    ([key]) => key.toLowerCase() === 'expires',
+  )?.[1];
+  if (!value || !/^\d+$/.test(value)) return undefined;
+  const n = Number(value);
+  // Only absolute Unix timestamps are recognized; small values may be durations.
+  if (Number.isSafeInteger(n) && n >= 1_000_000_000 && n < 10_000_000_000) return n * 1000;
+  if (Number.isSafeInteger(n) && n >= 1_000_000_000_000 && n < 10_000_000_000_000) return n;
+  return undefined;
+}
 export class Source {
   private readonly domains: SourceDomains;
   private session?: Credentials;
@@ -283,7 +294,7 @@ export class Source {
         : undefined,
     };
   }
-  async open(known: Book, signal?: AbortSignal): Promise<Response> {
+  private async fileLink(known: Book, signal?: AbortSignal) {
     if (!this.configured || !known.hash) fail('SOURCE_NOT_CONFIGURED', '书源入口或候选不完整');
     const path =
       '/eapi/book/' + encodeURIComponent(known.id) + '/' + encodeURIComponent(known.hash);
@@ -309,7 +320,77 @@ export class Source {
       .parse(link);
     const url = fields.file?.downloadLink || fields.downloadLink || fields.url || fields.link;
     if (!url) fail('QUOTA_EXCEEDED', '书源未提供下载地址，请检查额度');
-    const response = await http.send(new URL(url, http.base + '/').href, {
+    return { http, url: new URL(url, http.base + '/').href };
+  }
+  private checkFile(response: Response): Response {
+    status(response, 'SOURCE');
+    if (
+      response.statusCode !== 200 ||
+      /text\/html|application\/json/.test(String(response.headers['content-type'])) ||
+      (response.headers['content-encoding'] && response.headers['content-encoding'] !== 'identity')
+    ) {
+      response.body.destroy();
+      fail('SOURCE_FILE_INVALID', '书源未返回完整书籍文件');
+    }
+    return response;
+  }
+  private deliveryUrl(raw: string): string {
+    const url = new URL(raw);
+    let decoded = url.href;
+    for (let i = 0; i < 2; i++) {
+      try {
+        decoded = decodeURIComponent(decoded);
+      } catch {
+        break;
+      }
+    }
+    if (
+      url.username ||
+      url.password ||
+      url.hash ||
+      [...url.searchParams.keys()].some((key) =>
+        /^(remix[-_]?user(id|key)|password|email|authorization|cookie|session(?:[-_]?id)?|access_token|api[-_]?key)$/i.test(
+          key,
+        ),
+      ) ||
+      [this.session?.key, this.config.sourcePassword, this.config.sourceEmail].some(
+        (secret) => secret && decoded.includes(secret),
+      )
+    )
+      fail('SOURCE_LINK_PRIVATE', '书源链接包含账号或会话信息，不能转交给客户端');
+    return url.href;
+  }
+  async openForDelivery(
+    known: Book,
+    signal?: AbortSignal,
+  ): Promise<Response & { expires_at?: number }> {
+    const { http, url } = await this.fileLink(known, signal);
+    this.deliveryUrl(url);
+    const response = await http.send(url, {
+      signal,
+      allowedOrigins: [new URL(http.base).origin, ...this.config.sourceOrigins],
+      publicOrigins: true,
+      timeoutMs: this.config.transferMs,
+      anonymous: true,
+      cookies: false,
+    });
+    try {
+      this.deliveryUrl(response.url);
+      if (response.statusCode === 401 || response.statusCode === 403)
+        fail('SOURCE_LINK_AUTH_REQUIRED', '书源文件链接需要额外认证，不能直接交付给 Agent');
+      this.checkFile(response);
+      const expires_at = linkExpiry(response.url);
+      if (expires_at !== undefined && expires_at <= Date.now())
+        fail('SOURCE_LINK_EXPIRED', '书源返回的文件链接已过期，不自动重新取票');
+      return Object.assign(response, { expires_at });
+    } catch (error) {
+      response.body.destroy();
+      throw error;
+    }
+  }
+  async open(known: Book, signal?: AbortSignal): Promise<Response> {
+    const { http, url } = await this.fileLink(known, signal);
+    const response = await http.send(url, {
       signal,
       allowedOrigins: [new URL(http.base).origin, ...this.config.sourceOrigins],
       publicOrigins: true,
@@ -327,16 +408,7 @@ export class Source {
           }
         : {},
     });
-    status(response, 'SOURCE');
-    if (
-      response.statusCode !== 200 ||
-      /text\/html|application\/json/.test(String(response.headers['content-type'])) ||
-      (response.headers['content-encoding'] && response.headers['content-encoding'] !== 'identity')
-    ) {
-      response.body.destroy();
-      fail('SOURCE_FILE_INVALID', '书源未返回完整书籍文件');
-    }
-    return response;
+    return this.checkFile(response);
   }
   async close(): Promise<void> {
     await this.domains.close();

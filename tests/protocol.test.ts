@@ -48,12 +48,13 @@ async function connect(env: Record<string, string>) {
   cleanups.push(() => client.close());
   return { transport, client, stderr: () => stderr };
 }
-test('real stdio child lists five tools, returns structured/text results and exits on EOF', async () => {
+test('real stdio child lists six tools, returns structured/text results and exits on EOF', async () => {
   const { env, temp } = await setup();
   const { client, stderr } = await connect(env);
   const list = await client.listTools();
   expect(list.tools.map((t) => t.name).sort()).toEqual([
     'acquire_book',
+    'download_book',
     'get_download_url',
     'get_task',
     'search_books',

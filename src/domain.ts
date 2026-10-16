@@ -50,6 +50,7 @@ export const taskStates = [
   'blocked',
   'needs_review',
   'ready',
+  'download_available',
   'failed',
   'cancelled',
 ] as const;
@@ -126,7 +127,7 @@ export function digest(value: unknown): string {
 }
 export interface Task {
   id: string;
-  kind: 'acquire' | 'upload';
+  kind: 'acquire' | 'upload' | 'download';
   state: TaskState;
   required_format: Format;
   book: Book;
@@ -145,5 +146,16 @@ export interface Task {
   error?: PublicError;
   submission_error?: PublicError;
   verification?: { sha256: string; size_bytes: number; at: number };
+  save_to_cwa?: boolean;
+  source_requested_at?: number;
+  source_download?: {
+    url: string;
+    format: Format;
+    filename: string;
+    available_until: number;
+    expires_at?: number;
+    verification?: { sha256: string; size_bytes: number; at: number };
+  };
 }
-export const terminal = (t: Task): boolean => ['ready', 'failed', 'cancelled'].includes(t.state);
+export const terminal = (t: Task): boolean =>
+  ['ready', 'download_available', 'failed', 'cancelled'].includes(t.state);

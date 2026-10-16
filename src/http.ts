@@ -5,7 +5,7 @@ import { BlockList, isIP, type LookupFunction } from 'node:net';
 import { fail, AppError } from './domain.js';
 import { VERSION } from './version.js';
 
-export type Response = Dispatcher.ResponseData;
+export type Response = Dispatcher.ResponseData & { url: string };
 const blocked = new BlockList();
 for (const [address, prefix] of [
   ['0.0.0.0', 8],
@@ -100,6 +100,7 @@ export class Http {
       timeoutMs?: number;
       cookies?: boolean;
       publicOrigins?: boolean;
+      anonymous?: boolean;
     } = {},
   ): Promise<Response> {
     let url = this.url(path);
@@ -128,7 +129,7 @@ export class Http {
           'accept-encoding': 'identity',
           ...options.headers,
         };
-        if (crossed) {
+        if (crossed || options.anonymous) {
           for (const name of Object.keys(headers))
             if (/^(authorization|cookie|remix[-_]|x-)/i.test(name)) delete headers[name];
         } else if (options.cookies !== false) {
@@ -152,7 +153,7 @@ export class Http {
         // Consumers still observe stream errors through iteration/pipeline.
         response.body.on('error', () => {});
         const cookies = response.headers['set-cookie'];
-        if (!crossed && options.cookies !== false)
+        if (!crossed && !options.anonymous && options.cookies !== false)
           for (const cookie of Array.isArray(cookies) ? cookies : cookies ? [cookies] : [])
             await this.jar.setCookie(cookie, url);
         if ([301, 302, 303, 307, 308].includes(response.statusCode)) {
@@ -172,7 +173,7 @@ export class Http {
           url = next.href;
           continue;
         }
-        return response;
+        return Object.assign(response, { url });
       }
       return fail('UPSTREAM_INVALID', this.label + ' 重定向次数过多');
     } catch (error) {

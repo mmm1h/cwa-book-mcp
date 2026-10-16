@@ -124,7 +124,7 @@ try {
         const next = new Client({ name: 'hub-device-two', version: '1.0.0' });
         clients.push(next);
         await next.connect(new StreamableHTTPClientTransport(new URL(base + '/mcp/cwa-books')));
-        assert.equal((await next.listTools()).tools.length, 5);
+        assert.equal((await next.listTools()).tools.length, 6);
         assert(
           !(await next.callTool({ name: search.name, arguments: { query: 'reconnect' } })).isError,
         );
@@ -144,7 +144,7 @@ try {
         if (attempt === 29) throw Error(String(error) + '\n' + logs, { cause: error });
         await delay(1000);
       }
-      if (attempt === 29) throw Error('MCPHub did not expose five tools');
+      if (attempt === 29) throw Error('MCPHub did not expose six tools');
     }
   }
   if (process.env.CLAUDE_CLI_PATH) {

@@ -56,12 +56,11 @@ export class Store {
       const version = this.db
         .prepare('SELECT value FROM meta WHERE key = ?')
         .get('schema_version') as { value: string } | undefined;
-      if (version && version.value !== '1')
+      if (version && !['1', '2'].includes(version.value))
         fail('STATE_VERSION_UNSUPPORTED', '状态版本不兼容；请使用对应应用版本或独立目录');
       if (existing && existing.value !== identity)
         fail('STATE_IDENTITY_MISMATCH', '状态目录属于其他 CWA/账号/实例，请使用独立 STATE_DIR');
       this.db.prepare('INSERT OR IGNORE INTO meta VALUES (?,?)').run('identity', identity);
-      this.db.prepare('INSERT OR IGNORE INTO meta VALUES (?,?)').run('schema_version', '1');
       const keyPath = join(dir, 'ticket.key');
       try {
         this.key = readFileSync(keyPath);
@@ -80,6 +79,12 @@ export class Store {
         }
       }
       this.db.prepare('INSERT OR IGNORE INTO meta VALUES (?,?)').run('key_created', '1');
+      // Mark extended tasks so older binaries cannot replay downloads as legacy acquisitions.
+      this.db
+        .prepare(
+          'INSERT INTO meta VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+        )
+        .run('schema_version', '2');
     } catch (error) {
       this.db?.close();
       this.owner.close();
@@ -128,7 +133,7 @@ export class Store {
       const count = (
         this.db
           .prepare(
-            "SELECT count(*) AS n FROM tasks WHERE state NOT IN ('ready','failed','cancelled')",
+            "SELECT count(*) AS n FROM tasks WHERE state NOT IN ('ready','download_available','failed','cancelled')",
           )
           .get() as { n: number }
       ).n;
@@ -177,7 +182,7 @@ export class Store {
       const ids = (
         this.db
           .prepare(
-            "SELECT id FROM tasks WHERE state IN ('ready','failed','cancelled') AND updated < ?",
+            "SELECT id FROM tasks WHERE state IN ('ready','download_available','failed','cancelled') AND updated < ?",
           )
           .all(before) as { id: string }[]
       ).map((r) => r.id);

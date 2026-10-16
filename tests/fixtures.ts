@@ -313,3 +313,83 @@ export async function until(
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
 }
+
+export async function mockSource(format: 'epub' | 'pdf' = 'epub') {
+  const data = format === 'pdf' ? pdf : epub;
+  const state = {
+    tickets: 0,
+    downloads: 0,
+    privateLink: false,
+    authRequired: false,
+    badFile: false,
+    dropTicket: false,
+    expires: undefined as number | undefined,
+    headers: [] as IncomingMessage['headers'][],
+  };
+  const endpoint = await listen(async (req, res) => {
+    const url = new URL(req.url!, 'http://localhost');
+    if (url.pathname === '/file' || url.pathname === '/redirect') {
+      state.headers.push(req.headers);
+      if (state.authRequired && !req.headers['remix-userkey']) {
+        res.writeHead(401);
+        res.end();
+        return;
+      }
+      if (url.pathname === '/redirect') {
+        res.writeHead(302, {
+          location:
+            '/file?ticket=single-file-capability' +
+            (state.expires ? '&expires=' + state.expires : ''),
+        });
+        res.end();
+        return;
+      }
+      state.downloads++;
+      const content = state.badFile ? Buffer.from('broken') : data;
+      res.writeHead(200, {
+        'content-type': format === 'pdf' ? 'application/pdf' : 'application/epub+zip',
+        'content-length': content.length,
+      });
+      res.end(content);
+      return;
+    }
+    res.setHeader('content-type', 'application/json');
+    if (
+      req.headers['remix-userid'] !== '7' ||
+      req.headers['remix-userkey'] !== 'private-session-key'
+    ) {
+      res.end(JSON.stringify({ success: 0, error: 'Session expired' }));
+      return;
+    }
+    const raw = {
+      id: 25,
+      hash: 'hash25',
+      title: '合成测试书',
+      author: '测试作者',
+      language: 'chinese',
+      extension: format,
+      filesize: data.length,
+    };
+    if (url.pathname === '/eapi/book/search') {
+      await body(req);
+      res.end(JSON.stringify({ success: 1, books: [raw], pagination: { total_pages: 1 } }));
+    } else if (url.pathname === '/eapi/book/25/hash25/file') {
+      state.tickets++;
+      if (state.dropTicket) {
+        res.destroy();
+        return;
+      }
+      res.end(
+        JSON.stringify({
+          success: 1,
+          file: {
+            downloadLink: state.privateLink
+              ? '/file?remix_userkey=private-session-key'
+              : '/redirect',
+          },
+        }),
+      );
+    } else res.end(JSON.stringify({ success: 1, book: raw, user: { id: 7 } }));
+  });
+  return { ...endpoint, state, data };
+}

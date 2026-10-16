@@ -24,14 +24,52 @@ const sha256 = createHash('sha256').update(epub).digest('hex');
 const uuid = '123e4567-e89b-42d3-a456-426614174000';
 const authorization = 'Basic ' + Buffer.from('synthetic:synthetic').toString('base64');
 const fake = createServer((req, res) => {
+  const requestUrl = new URL(req.url, 'http://localhost');
+  const path = requestUrl.pathname;
+  if (path === '/source-file') {
+    assert.equal(req.headers.cookie, undefined);
+    assert.equal(req.headers.authorization, undefined);
+    assert.equal(req.headers['remix-userkey'], undefined);
+    res.writeHead(200, { 'content-type': 'application/epub+zip', 'content-length': epub.length });
+    res.end(epub);
+    return;
+  }
+  if (path.startsWith('/eapi/')) {
+    assert.equal(req.headers['remix-userkey'], 'synthetic-source-key');
+    const book = {
+      id: 25,
+      hash: 'packed-hash',
+      title: 'source smoke',
+      author: '',
+      language: 'chinese',
+      extension: 'epub',
+      filesize: epub.length,
+    };
+    res.setHeader('content-type', 'application/json');
+    if (path.endsWith('/file'))
+      res.end(
+        JSON.stringify({
+          success: 1,
+          file: { downloadLink: '/source-file?ticket=packed-capability' },
+        }),
+      );
+    else if (path === '/eapi/book/search') {
+      req.resume();
+      res.end(JSON.stringify({ success: 1, books: [book], pagination: { total_pages: 1 } }));
+    } else res.end(JSON.stringify({ success: 1, book, user: { id: 7 } }));
+    return;
+  }
   if (req.headers.authorization !== authorization) {
     res.writeHead(401);
     res.end();
     return;
   }
-  const path = new URL(req.url, 'http://localhost').pathname;
   if (path === '/opds/search') {
     res.setHeader('content-type', 'application/atom+xml');
+    if (requestUrl.searchParams.get('query') === 'source smoke') {
+      res.end('<feed xmlns="http://www.w3.org/2005/Atom"></feed>');
+      return;
+    }
     res.end(
       '<feed xmlns="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/terms/">' +
         '<entry><id>urn:uuid:' +
@@ -67,6 +105,9 @@ const env = {
   CWA_USERNAME: 'synthetic',
   CWA_PASSWORD: 'synthetic',
   CWA_WRITE_ENABLED: 'false',
+  ZLIBRARY_BASE_URL: 'http://127.0.0.1:' + fake.address().port,
+  ZLIBRARY_USER_ID: '7',
+  ZLIBRARY_USER_KEY: 'synthetic-source-key',
   STATE_DIR: join(temp, 'state'),
 };
 const base = ['exec', '--yes', '--ignore-scripts', '--no-audit', '--no-fund', '--cache', cache];
@@ -129,7 +170,8 @@ try {
   assert.equal(version.stdout.trim(), packed.version);
   const coldMs = performance.now() - before;
   let stderr = '',
-    taskId;
+    taskId,
+    sourceTaskId;
   for (let n = 0; n < 2; n++) {
     const transport = new StdioClientTransport({
       command: process.execPath,
@@ -144,7 +186,7 @@ try {
     const client = new Client({ name: 'packed-npx-client', version: '1.0.0' });
     clients.push(client);
     await client.connect(transport);
-    assert.equal((await client.listTools()).tools.length, 5);
+    assert.equal((await client.listTools()).tools.length, 6);
     const response = await client.callTool({
       name: 'search_books',
       arguments: { query: '中文 packed smoke' },
@@ -208,6 +250,47 @@ try {
       },
     });
     assert.equal(upload.structuredContent.error.code, 'WRITE_DISABLED');
+    if (n === 0) {
+      const found = await client.callTool({
+        name: 'search_books',
+        arguments: { query: 'source smoke' },
+      });
+      assert(!found.isError);
+      const candidateId = found.structuredContent.candidates[0].candidate_id;
+      const downloaded = await client.callTool({
+        name: 'download_book',
+        arguments: {
+          request_id: 'packed-source',
+          candidate_id: candidateId,
+          required_format: 'epub',
+          save_to_cwa: false,
+        },
+      });
+      assert(!downloaded.isError);
+      sourceTaskId = downloaded.structuredContent.id;
+    }
+    const sourceDeadline = Date.now() + 10000;
+    for (;;) {
+      const task = await client.callTool({
+        name: 'get_task',
+        arguments: { task_id: sourceTaskId },
+      });
+      if (task.structuredContent.state === 'download_available') break;
+      assert(Date.now() < sourceDeadline, 'Packed source task did not validate');
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    const sourceLink = await client.callTool({
+      name: 'get_download_url',
+      arguments: { task_id: sourceTaskId },
+    });
+    assert(!sourceLink.isError);
+    assert.equal(sourceLink.structuredContent.delivery, 'source');
+    assert.equal(sourceLink.structuredContent.status, 'link_issued');
+    assert.deepEqual(sourceLink.structuredContent.authentication, { scheme: 'none' });
+    assert.equal(sourceLink.structuredContent.verification.sha256, sha256);
+    const sourceResponse = await fetch(sourceLink.structuredContent.url);
+    assert.equal(sourceResponse.status, 200);
+    assert.deepEqual(Buffer.from(await sourceResponse.arrayBuffer()), epub);
     await client.close();
   }
   const key = await readFile(join(env.STATE_DIR, 'ticket.key'));
@@ -231,7 +314,8 @@ try {
       empty_cwd: true,
       empty_cache: true,
       install_scripts: false,
-      stdio_tools: 5,
+      stdio_tools: 6,
+      source_direct_download: true,
       opds_direct_download: true,
       signed_gateway_download: true,
       cached_restarts: 2,

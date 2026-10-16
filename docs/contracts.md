@@ -1,90 +1,86 @@
 # 接口契约
 
-stdio 是唯一 MCP 传输；HTTP 仅用于授权文件。默认启动无交互提示，stdout 只有 JSON-RPC，日志走 stderr。成功工具同时返回 structuredContent 与等价 JSON 文本；业务错误返回 isError:true 和 error:{code,message,retryable}。schema 无效输入由 SDK 拒绝。
+stdio 是唯一 MCP 传输；stdout 只有 JSON-RPC，日志走 stderr。成功同时返回 structuredContent 与等价 JSON 文本；业务错误为 isError:true、error:{code,message,retryable}。时间戳为 Unix 毫秒，签名网关 expires_at 为 ISO8601。
 
-## 工具
+## 六个工具
 
-| 工具             | 输入与行为                                                                                                                                      |
-| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| search_books     | query 必填；author 可选；language 默认 zh_preferred，可用 any 或语言代码；formats 为 epub/pdf 数组；limit 默认 20、最大 50；cursor 可续查       |
-| acquire_book     | action 默认 start，需要 request_id、candidate_id、required_format；retry/cancel 使用 task_id；resolve 使用 task_id 与 CWA candidate_id          |
-| upload_book      | action 默认 prepare，需要 request_id、title、filename、size_bytes、required_format；可选 authors、language、sha256；refresh_ticket 使用 task_id |
-| get_task         | task_id；返回当前持久任务和可供 resolve 的 choices                                                                                              |
-| get_download_url | task_id；delivery 默认 opds，也可 gateway；仅 ready，在服务端重新核验书籍身份与文件后返回下载入口                                               |
+| 工具             | 输入与行为                                                                                                                                  |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| search_books     | query 必填；author 可选；language 默认 zh_preferred，也可 any/语言代码；formats 为 epub/pdf 数组；limit 默认 20、最大 50；cursor 续查       |
+| download_book    | start 需 request_id、candidate_id、required_format；save_to_cwa 默认 true。仅选定 Z 原文件，不做格式转换。collect/retry/cancel 仅需 task_id |
+| acquire_book     | start 需 request_id、candidate_id、required_format；保持书库获取/转换流程。retry/cancel 用 task_id，resolve 用 task_id 与 CWA candidate_id  |
+| upload_book      | prepare 需 request_id、title、filename、size_bytes、required_format，可选 authors/language/sha256；refresh_ticket 用 task_id                |
+| get_task         | task_id；返回持久任务、独立下载/入库状态及 resolve 的 choices，不自动返回下载能力链接                                                       |
+| get_download_url | task_id，delivery 可选 source/opds/gateway；下载任务默认 source，其余默认 opds                                                              |
 
-request_id 为调用方生成的 1–128 字符幂等键。创建请求先事务登记，再开始副作用。同 key、同参数返回原任务；不同参数返回 IDEMPOTENCY_CONFLICT。不同 request_id 仍会在获取/提交前核对书库。一个任务只要求 epub 或 pdf 一种输出格式。
+request_id 为调用方生成的 1–128 字符幂等键。同 key/同参数返回原任务，不同参数返回 IDEMPOTENCY_CONFLICT。download_book 省略 save_to_cwa 与显式 true 等价。原文件下载会消耗书源额度，使用新的 request_id 表示明确的新请求。
 
-search_books 返回 candidates、selected_tier、searched、partial、warnings、next_cursor。candidate_id 为服务端保存的短期标识，不能传 URL、任意文件路径或伪造上游参数。游标绑定查询条件，可修改 limit。候选和游标 30 分钟失效。
+候选不可传任意 URL、路径或伪造上游参数；candidate_id 与 cursor 30 分钟失效。默认中文优先：CWA 中文 → 书源中文 → CWA 其他 → 书源其他，找到一层后只分页该层；language:any 为 CWA → 书源。每次最多读三个上游页，使用 next_cursor 继续。partial/warnings 表示不能断言无结果；语言依元数据，不从书名推断。
 
-默认优先 CWA 中文 → 书源中文 → CWA 其他 → 书源其他，找到一层候选后只分页该层；language:any 采用 CWA → 书源。每次调用最多读取三个上游页，不完整时用 next_cursor 继续。上游失败会返回 partial/warnings，不降级为“无结果”；未配置书源时明确标记 SOURCE_NOT_CONFIGURED，并可返回书库其他语言结果。语言来自元数据，不从书名字符推断。
+## 下载并入库
 
-上传 title/authors/language 应与文件元数据对应，本工具不会改写书名。EPUB/PDF 以外输入拒绝；sha256 可用于整文件完整性校验。CWA 多个匹配进入 needs_review，由调用方选择 choices 中的候选。提交后因入库元数据差异无法自动确认时，也可重新 search_books，再 resolve 明确选择 CWA 记录；这不会改写元数据。resolve 始终保留语言与 ID/UUID 校验。
+调用 download_book(start, request_id, candidate_id, required_format) 创建任务。默认需 CWA_WRITE_ENABLED=true；传 save_to_cwa:false 不需写权限，也不执行 CWA 入库查询。required_format 必须等于候选原文件格式。CWA 候选返回 DIRECT_DOWNLOAD_UNAVAILABLE，不自动到书源寻找或下载其他版本。
 
-## 任务状态
+MCP 认证并核对候选 ID/hash/元数据/格式，从书源取文件链接，匿名 GET 后完成文件校验。校验通过即可获取原文件链接，无需等待 CWA 入库。自动入库复用同一临时文件，不要求 Agent 将下载文件传回 NAS。入库核对可复用已有 CWA 匹配，多个匹配仍需 resolve。
 
-| 状态                        | 含义 / 后续操作                                                           |
-| --------------------------- | ------------------------------------------------------------------------- |
-| awaiting_upload             | 等待按票据 PUT；可 refresh_ticket                                         |
-| queued、downloading、staged | 书库核对、书源下载或完整文件待提交                                        |
-| submitting                  | 已持久化提交意图；重启后一律先核对                                        |
-| reconciling、verifying      | 等待 CWA，或实际验证目标格式文件                                          |
-| blocked                     | 认证、权限、输入、格式或通路受阻；修复后 retry                            |
-| needs_review                | 多个匹配或提交后无法确认；选择 choices，或人工检查后 retry                |
-| ready                       | 已核验 CWA ID/UUID、元数据、目标格式、文件长度与格式，并记录 SHA-256/时间 |
-| failed、cancelled           | 过期/失败，或主动取消；不删除 CWA 记录                                    |
+任务通过 get_task 分别报告：
 
-ready 表示 verification.at 时点的验证结果；下载仍重新核对，不能使用曾经成功的结果绕过 CWA 删除、身份改变或文件损坏。get_task 不自动发放下载地址。
+- download.status：pending、available、unavailable、expired 或 cancelled；包含 format、filename、verification、available_until、expires_at 和 cache_until，无文件 URL。
+- collection：requested 与 state。requested:false 时 state:not_requested；否则使用下表的 CWA 流程状态。
+- state:download_available 表示仅下载任务的原文件已验证；不是 CWA ready，也不是 Agent 已保存。
 
-任务的可选 submission_error 保留提交时的脱敏错误，核对、retry 和重启后仍可查看。它是提交历史；最终是否 ready 仍以书库及实际文件验证为准。CWA 返回 HTTP 200 和 location 时也可能在会话中报告排队失败，不能据此自动重传。
-
-CWA HTTP 200、上传返回 location、书源成功下载都不等于 ready。EPUB 校验 ZIP 路径、重复/加密/符号链接条目、数量、展开大小、每条目 CRC、首条未压缩 mimetype、container、OPF 包结构与阅读顺序；PDF 校验头部和 EOF 标记。这是基础完整性验证，不是文档渲染或内容安全扫描。
-
-retry 对已提交任务仅延长核对窗口，不重新下载或提交。提交前的输入文件丢失时，retry 恢复为 awaiting_upload（本地）或 queued（书源）。同一书籍已有未确认提交时，新任务返回 RELATED_SUBMISSION_PENDING 与 waiting_for，处理关联任务后再重试。上传请求已发出但响应断开时保留提交意图。cancel 会中止本地传输和跟踪，已被 CWA 接收的书籍/转换不会撤销。MCP 调用取消不删除已创建的持久任务；客户端断开后是否继续运行由宿主是否保留子进程决定。
+仅下载任务可在缓存期限内调用 download_book(action:collect,task_id)，自动复用原文件入库；重复 collect 不重复提交。缓存过期/丢失返回 INPUT_MISSING，不自动从 Z 补下载。取消只停止跟踪并禁止继续发链接，已发给客户端的上游能力链接由上游控制，无法撤销。
 
 ## 下载结果
 
-get_download_url 默认返回已由服务端校验的 CWA OPDS 链接及网页入口：
-
-0.2.0 改变了默认模式；依赖原 expires_at、顶层 size_bytes/sha256 的调用方可显式传 delivery:gateway。
+download_book 任务默认返回：
 
 ```json
 {
   "task_id": "<UUID>",
-  "delivery": "opds",
-  "url": "https://example.invalid/opds/download/123/epub/",
-  "web_url": "https://example.invalid/book/123",
-  "authentication": { "scheme": "basic" },
+  "delivery": "source",
+  "status": "link_issued",
+  "url": "https://example.invalid/file?ticket=<FILE_CAPABILITY>",
+  "filename": "book.epub",
+  "format": "epub",
+  "authentication": { "scheme": "none" },
+  "expires_at": null,
+  "available_until": 1792116900000,
   "verification": { "size_bytes": 12345, "sha256": "<SHA256>", "at": 1792116000000 }
 }
 ```
 
-MCP 内部完成 ID/UUID、元数据、目标格式和实际文件的流式验证，失败时不返回下载地址；校验临时文件随后删除。verification 是此次服务端观察结果，仅供记录与诊断，不要求客户端重复实现检查。OPDS 客户端用其 CWA Basic 认证访问 url，浏览器打开 web_url 正常登录下载；返回值不包含凭据。
+Agent 使用普通 HTTP 文件工具保存并读取；不要求它重复做身份、格式或摘要校验。verification 是服务端此次观察，不保证之后 GET 字节不变。status:link_issued 只表示已提供链接，不表示已保存。URL 的绝对 Unix expires 参数可识别时，expires_at 返回 Unix 毫秒，否则为 null。available_until 取本地窗口与已知上游到期的较早者，非上游保证；已知到期后拒绝发链接。get_task 的 cache_until 单独控制临时文件的补入库期限，下载链接过期仍可在此期限内 collect。
 
-直连优先使用 feed 中按其 URL 解析的同源、无凭据 acquisition 链接；旧任务未保存链接时使用 CWA 标准下载路由，均保留 CWA_BASE_URL 的反代子路径。feed length/updated/mtime 不作为文件完整性依据。CWA URL 遵循账号权限，不是限时任务票据，故无 expires_at；之后删除、替换或重新导出文件可能使内容改变。
+匿名下载受阻、文件损坏或链接包含已知账号/会话信息时不发链接。get_download_url 重用已验证链接，不再次取票或整文件下载。取票/下载结果不明进入 blocked，不自动申请新票；过期返回 SOURCE_LINK_EXPIRED，新的下载需明确创建新请求。入库失败不影响尚在期限内的已验证原文件链接。
 
-传入 `{"task_id":"<UUID>","delivery":"gateway"}` 可取得原签名 GET 链接；返回 task_id、delivery:gateway、url、expires_at、size_bytes、sha256。此模式不向客户端转交 CWA 凭据，每次文件 GET 都会在网关内部重新核对身份与文件，需要调用方能访问该文件入口。
+CWA 任务必须 ready 后才能获取 OPDS 或网关链接。OPDS 返回 delivery:opds、url、web_url、authentication:{scheme:basic}、verification；web_url 为人工参考，不代表 Agent 已取得文件。必须由客户端已有的 CWA Basic 认证下载；MCP env 不会自动提供认证。feed acquisition 链接必须同源、无凭据、匹配书籍/格式并保留反代子路径。
 
-## 签名文件网关
+显式 delivery:gateway 返回本进程签名 GET 的 url、expires_at、size_bytes、sha256，需要 Agent 可达的文件入口。默认 source 不覆盖 CWA 独有书或转换结果，原文件也可能与 CWA 导出文件具有不同摘要。
 
-upload_book.prepare 返回：
+## CWA 任务与恢复
 
-```json
-{
-  "task_id": "<UUID>",
-  "state": "awaiting_upload",
-  "upload": {
-    "method": "PUT",
-    "url": "http://localhost:8765/files/upload/<UUID>?ticket=<SIGNED_TICKET>",
-    "headers": { "Content-Length": "12345", "Content-Type": "application/epub+zip" },
-    "expires_at": "<ISO8601>"
-  }
-}
-```
+| 状态                      | 含义                                                                 |
+| ------------------------- | -------------------------------------------------------------------- |
+| awaiting_upload           | 等待整文件 PUT，可 refresh_ticket                                    |
+| queued/downloading/staged | 核对书库、下载或完整文件待提交                                       |
+| submitting                | 已持久化提交意图，重启后先核对                                       |
+| reconciling/verifying     | 等待 CWA 或验证实际目标格式文件                                      |
+| blocked                   | 认证、权限、输入或通路受阻；检查 error                               |
+| needs_review              | 多个匹配或提交后无法确认；选择 choices，或人工处理后 retry           |
+| ready                     | 实际核验 CWA ID/UUID、元数据、目标格式、长度/格式并记录 SHA-256/时间 |
+| failed/cancelled          | 过期/失败或主动取消，不删除 CWA 记录                                 |
 
-按返回方法/地址发送整文件，必须提供准确 Content-Length；不接受 chunked 或压缩编码。通过长度、可选哈希和格式校验后原子发布暂存文件。再次发送相同任务与相同内容返回成功，不覆盖文件、不重复入库；内容不同返回冲突。单任务同时上传返回 UPLOAD_IN_PROGRESS。
+ready 是 verification.at 时点的观察；OPDS/网关发链接仍重新核对 CWA 身份与实际文件。HTTP 200、location、书源下载成功均不能代替 CWA 验证。submission_error 保留脱敏提交反馈，包括 HTTP 200 时的排队失败；错误后仍先核对，不盲目重传。
 
-gateway 下载为 GET /files/download/{task_id}?ticket=...，只从 CWA 取得目标格式。返回完整 HTTP 200、准确长度和 SHA-256 ETag；Range 请求返回 416。没有任意 URL 代理、服务端路径、静态目录列表或 HTTP MCP 路由。
+上传 title/authors/language 应与真实文件元数据对应，不改写书名。resolve 明确选择 CWA 记录，语言及 ID/UUID 仍须匹配。已提交 retry 仅延长核对窗口，不重新下载/提交。同书已有未确认提交返回 RELATED_SUBMISSION_PENDING 与 waiting_for。MCP 调用取消不删除持久任务，宿主终止子进程会停止后台工作。
 
-票据 HMAC-SHA256 签名，绑定用途、任务、格式、期限；下载还绑定 CWA ID/UUID。错误/过期/用途不符返回 403。票据不能用于其他任务。HTTP 并发上限 4，额外请求返回 503；CWA 提交由单后台 worker 串行处理。GET 会先在临时磁盘完整校验，成功后才发送正文，传输结束清理临时副本。
+EPUB 校验 ZIP 路径、重复/加密/符号链接、展开大小、CRC、首条未压缩 mimetype、container 与 OPF/阅读顺序。PDF 校验头与 EOF。这是基础完整性验证，不是文档渲染或安全扫描。
 
-常见错误：WRITE_DISABLED、AUTH_REQUIRED、AUTH_EXPIRED、CAPTCHA_REQUIRED、QUOTA_EXCEEDED、SOURCE_UNAVAILABLE、SOURCE_REJECTED、ORIGIN_BLOCKED、SEARCH_INCOMPLETE、REFERENCE_EXPIRED、BOOK_IDENTITY_CHANGED、FORMAT_UNAVAILABLE、FILE_INVALID、HASH_MISMATCH、LENGTH_MISMATCH、STORAGE_FULL、UPLOAD_OUTCOME_UNKNOWN、RECONCILIATION_REQUIRED。所有工具时间戳为 Unix 毫秒；票据内部 expires 为 Unix 秒，客户端链接的 expires_at 为 ISO8601。
+## 可选签名文件接口
+
+upload_book.prepare 返回 task_id、state、upload:{method:PUT,url,headers,expires_at}。整文件 PUT /files/upload/{task_id}?ticket=...，准确 Content-Length，禁止 chunked/压缩，支持可选 SHA-256。重复相同内容成功，不覆盖或重复入库；不同内容冲突。同任务同时上传返回 UPLOAD_IN_PROGRESS。
+
+网关 GET /files/download/{task_id}?ticket=... 只读取 CWA 目标格式，先完整校验再返回 HTTP 200、长度与 SHA-256 ETag，结束清理副本；Range 返回 416。HMAC 票据绑定用途、任务、格式、期限及下载 ID/UUID，错误/过期返回 403。HTTP 并发最多 4，额外请求 503；无任意 URL 代理、服务端路径或目录列表。
+
+常见错误：WRITE_DISABLED、AUTH_REQUIRED、AUTH_EXPIRED、CAPTCHA_REQUIRED、QUOTA_EXCEEDED、SOURCE_UNAVAILABLE、SOURCE_LINK_AUTH_REQUIRED、SOURCE_LINK_PRIVATE、SOURCE_LINK_EXPIRED、SOURCE_OUTCOME_UNKNOWN、DIRECT_DOWNLOAD_UNAVAILABLE、SOURCE_CHANGED、ORIGIN_BLOCKED、SEARCH_INCOMPLETE、REFERENCE_EXPIRED、BOOK_IDENTITY_CHANGED、FORMAT_UNAVAILABLE、FILE_INVALID、HASH_MISMATCH、LENGTH_MISMATCH、STORAGE_FULL、INPUT_MISSING、UPLOAD_OUTCOME_UNKNOWN、RECONCILIATION_REQUIRED。

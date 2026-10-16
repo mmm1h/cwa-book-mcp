@@ -26,6 +26,7 @@ export interface Config {
   confirmMs: number;
   pollMs: number;
   ticketSeconds: number;
+  sourceLinkSeconds: number;
   retentionDays: number;
 }
 export function sourceConfigured(config: Config): boolean {
@@ -140,6 +141,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     confirmMs: number('CONFIRM_TIMEOUT_SECONDS', 600, 1, 86400) * 1000,
     pollMs: number('POLL_INTERVAL_SECONDS', 5, 1, 300) * 1000,
     ticketSeconds: number('TICKET_TTL_SECONDS', 900, 1, 86400),
+    sourceLinkSeconds: number('SOURCE_DOWNLOAD_TTL_SECONDS', 900, 1, 86400),
     retentionDays: number('RETENTION_DAYS', 30, 1, 365),
   };
 }

@@ -1,7 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { publicError, searchSchema } from './domain.js';
-import { acquireSchema, uploadSchema } from './tasks.js';
+import { acquireSchema, downloadBookSchema, uploadSchema } from './tasks.js';
 import { downloadSchema } from './gateway.js';
 import type { App } from './app.js';
 import { VERSION } from './version.js';
@@ -53,6 +53,22 @@ export function createMcp(app: App): McpServer {
     (input) => run(() => app.tasks.acquire(input)),
   );
   server.registerTool(
+    'download_book',
+    {
+      description:
+        '从显式选择的 Z 候选下载 EPUB/PDF 原文件并在 MCP 内校验。start 需要 request_id、candidate_id、required_format，默认 save_to_cwa:true，将同一文件自动交给 CWA；仅下载用 false。get_task.download.status 为 available 后可用 get_download_url 获取无需账号认证的书源链接，由 Agent 的 HTTP 工具保存并读取。collection 独立报告入库结果。collect 用 task_id 将未过期缓存补入 CWA；retry/cancel 使用 task_id。取票不明或链接过期不自动重新消耗额度。不交付 CWA 转换后的文件。',
+      inputSchema: downloadBookSchema,
+      outputSchema: output,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    (input) => run(() => app.tasks.download(input)),
+  );
+  server.registerTool(
     'upload_book',
     {
       description:
@@ -72,7 +88,7 @@ export function createMcp(app: App): McpServer {
     'get_task',
     {
       description:
-        '查询持久任务状态。只有 ready 表示已从 CWA 验证目标格式文件；needs_review 时选择 choices，已提交任务也可重新搜索 CWA 后 resolve。blocked 且有 waiting_for 时先处理关联任务；修复后用 retry 核对。',
+        '查询持久任务状态。ready 只表示 CWA 目标格式已验证；download_book 的 download.status:available 独立表示原文件已校验，可取链接，collection 报告入库进度。都不表示 Agent 已保存文件。needs_review 时选择 choices，已提交任务也可重新搜索 CWA 后 resolve。blocked 且有 waiting_for 时先处理关联任务；修复后用 retry 核对。',
       inputSchema: z.object({ task_id: z.string().uuid() }).strict(),
       outputSchema: output,
       annotations: { readOnlyHint: true, openWorldHint: false },
@@ -83,7 +99,7 @@ export function createMcp(app: App): McpServer {
     'get_download_url',
     {
       description:
-        '为 ready 任务在服务端完成书籍 ID/UUID、目标格式和文件完整性校验，默认返回该书的 OPDS 下载链接 url 和网页入口 web_url。客户端无需重复校验：OPDS 阅读器使用已配置的 CWA Basic 认证下载，浏览器打开 web_url 按正常网页登录并下载。verification 仅记录服务端本次校验结果。delivery:gateway 返回限时签名 GET 链接，需要可达的本程序文件入口，不支持 Range。',
+        'download_book 任务默认返回已在 MCP 内验证的书源原文件链接 delivery:source，无需客户端账号认证，可在 CWA 入库完成前获取；status:link_issued 仅表示链接提供，Agent 仍需 HTTP 保存并读取文件。重复取链接不重新取票，expires_at 为可识别的上游到期时间（未知为 null），available_until 同时受本地复用窗口与上游到期约束。其他任务默认返回需要 CWA Basic 认证的 OPDS 链接；delivery:gateway 显式取得限时签名 GET，需要可达的本程序文件入口。verification 仅记录服务端观察，无需客户端重复校验。',
       inputSchema: downloadSchema,
       outputSchema: output,
       annotations: { readOnlyHint: true, openWorldHint: true },

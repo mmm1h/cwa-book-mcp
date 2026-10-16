@@ -4,7 +4,7 @@
 
 ## 启动与客户端
 
-启动：`npx -y cwa-book-mcp@latest`。默认就是 stdio，无 transport 参数。当前源码 0.2.0 尚未发布，npm latest 仍为 0.1.0；测试新行为先 `npm ci && npm run build`，配置相同环境变量后运行 `node dist/cli.js`，或使用本地 tarball：`npx -y --package ./cwa-book-mcp-0.2.0.tgz cwa-book-mcp`。
+启动：`npx -y cwa-book-mcp@latest`。默认就是 stdio，无 transport 参数。当前源码 0.3.0；发布状态见 [validation](validation.md)。源码启动为 `npm ci && npm run build` 后运行 `node dist/cli.js`，也可使用本地 tarball：`npx -y --package ./cwa-book-mcp-0.3.0.tgz cwa-book-mcp`。
 
 - [标准 MCP 配置](../examples/local.json)：支持本地进程的桌面/CLI 客户端。
 - [MCPHub](../examples/mcphub.json)：在 Hub 主机安装 Node，用 command/args/env 导入，`perSessionClient:false` 共享单个子进程。单设备断开不终止共享任务。
@@ -36,6 +36,7 @@
 | CONFIRM_TIMEOUT_SECONDS             | 600，提交后等待 CWA 的核对窗口                            |
 | POLL_INTERVAL_SECONDS               | 5，后台核对间隔                                           |
 | TICKET_TTL_SECONDS                  | 900，上传/下载授权有效期                                  |
+| SOURCE_DOWNLOAD_TTL_SECONDS         | 900，原文件链接的本地复用及仅下载缓存期限；非上游有效期   |
 | RETENTION_DAYS                      | 30，完成任务与幂等记录保留期；未提交旧任务过期            |
 
 CWA_USERNAME、CWA_PASSWORD 和四个 ZLIBRARY 认证变量均支持同名 `_FILE`。文件为 UTF-8 文本，移除末尾换行；同一变量与其 _FILE 不能同时提供。只在运行环境保存凭据。日志不会输出凭据、书源下载地址或授权票据。
@@ -48,9 +49,13 @@ CWA_USERNAME、CWA_PASSWORD 和四个 ZLIBRARY 认证变量均支持同名 `_FIL
 
 ## CWA 与文件入口
 
+download_book 显式选取 Z 候选，默认 save_to_cwa:true；需启用 CWA_WRITE_ENABLED。仅下载传 false，不要求写权限，也不访问 CWA 入库接口。MCP 匿名下载并校验实际原文件，再交付同一书源链接，Agent 使用已有 HTTP 文件工具保存。MCP 同时复用暂存文件入库，入库失败不会隐藏已经可用的原文件链接。
+
+此流程不需要新增端口或 PUBLIC_BASE_URL。可识别 URL 中的绝对 expires 时返回 expires_at（Unix 毫秒），未知为 null。available_until 取本地复用窗口与上游到期的较早者，不保证上游一直可用；到期拒绝发链接。get_task 的 cache_until 单独控制补入库缓存，链接过期仍可在缓存有效期内 collect。匿名取文件受阻或链接含已知账号会话信息就明确失败；过期/取票不明不自动重新申请。仅下载缓存到期清理；collect 及默认入库在提交后清理文件。CWA 独有书和转换结果使用以下原有路径。
+
 先保证标准 OPDS 搜索和下载可用。写入前确认账号上传权限、标准登录/CSRF、允许的 EPUB/PDF 输入、目标转换格式与重复处理设置；本程序不会自动修改它们。转换属于 CWA；已有记录缺少目标格式时会受阻，不通过覆盖已有格式触发转换。
 
-get_download_url 默认在 MCP 内部重新核对书籍 ID/UUID、目标格式与完整文件，再返回 CWA OPDS 链接 url、网页入口 web_url 和服务端校验记录 verification。客户端只需打开或保存文件，无需重复做身份、格式或摘要校验。普通 CWA 下载链接按 CWA 账号权限访问，不带本程序的过期票据。
+acquire_book/upload_book 任务的 get_download_url 默认重新核对 CWA ID/UUID、目标格式与完整文件，再返回 OPDS 链接、网页参考和 verification。普通 CWA 链接按 CWA 账号权限访问；MCP env 账号不会自动传给 Agent，这条路径不能直接用于没有 CWA 认证的 Agent。
 
 CWA 已有入口可直接提供下载，不需为 OPDS 另开端口：
 
@@ -71,7 +76,7 @@ upload_book 的本地整文件 PUT 和 get_download_url 的 delivery:gateway 使
 
 默认位置：Windows 的 LOCALAPPDATA、macOS 的 Library/Application Support、Linux 的 XDG_DATA_HOME（或 ~/.local/share），下设 cwa-book-mcp/v1/实例哈希。哈希由 CWA URL、用户名、INSTANCE_ID 决定，与密码和 npm 缓存无关。明确 STATE_DIR 时也会校验实例身份。每个目录只允许一个进程；MCPHub 共享进程，独立客户端隔离目录。
 
-状态包含 tasks.sqlite、owner.sqlite、ticket.key、可选 source-session.json 和 staging。任务库使用 WAL；独立 SQLite 事务提供进程锁，强杀后由 OS 释放。Unix 目录权限 0700，密钥/会话 0600；Windows 依赖用户目录 ACL，自定义共享路径须由操作者限制访问。
+状态包含 tasks.sqlite、owner.sqlite、ticket.key、可选 source-session.json 和 staging。任务库也保存短期书源文件能力链接；只在 get_download_url 返回，不输出到日志或 get_task。任务库使用 WAL；独立 SQLite 事务提供进程锁，强杀后由 OS 释放。Unix 目录权限 0700，密钥/会话 0600；Windows 依赖用户目录 ACL，自定义共享路径须由操作者限制访问。
 
 `cwa-book-mcp diagnose` 只读取 CWA 搜索接口，不创建状态、不写入 CWA、不登录书源；成功仅表示读取通路可用。默认 stdio 模式只在 stderr 输出脱敏错误。常见配置错误包含 CONFIG_REQUIRED、STATE_IN_USE、FILE_PORT_IN_USE、SQLITE_UNAVAILABLE。
 
@@ -83,16 +88,18 @@ EOF、SIGINT、SIGTERM 会关闭本进程。重启后核对已提交任务、恢
 
 固定端口且密钥未变时，重启后未过期票据仍有效。动态端口重启后须刷新链接。ticket.key 损坏或丢失会拒绝启动，不能静默生成新密钥。备份时先停进程，再备份整个状态目录；不在运行中只复制 tasks.sqlite。无旧 Go 状态迁移。
 
+0.3.0 自动保留既有 v1 任务、幂等请求和密钥，并将状态版本标记为 2，避免旧版将下载任务当作普通获取而重放。升级后回退到 0.1/0.2 需使用升级前的完整备份或独立 STATE_DIR；不要手动降低版本标记。
+
 已完成/失败/取消任务按保留期删除，幂等保证也以该保留期为界。未提交过期任务清理输入；已提交且无法确认的任务保留待人工处理，输入暂存可清除，因为不会自动重传。未完成任务上限 1000，候选/游标缓存上限 10000、有效期 30 分钟。
 
 ## 打包与发布
 
 `npm run check` → `npm run test:package` → `npm pack`。包包含 dist、用户文档、许可证和 npm-shrinkwrap.json，不含源码、测试文件、凭据或 Go 产物。改依赖后运行 `node scripts/notices.mjs` 更新许可证。
 
-默认发布到 latest：交互发布执行 `npm publish --access public --tag latest`，GitHub 发布工作流也默认 latest。仅在明确要求预览版本时选择 next。同一已发布版本只调整标签，不重复发布；例如 `npm dist-tag add cwa-book-mcp@0.1.0 latest`。当前 latest 已指向 0.1.0，已有 next 标签保留兼容。
+默认发布到 latest：交互发布执行 `npm publish --access public --tag latest`，GitHub 发布工作流也默认 latest。仅在明确要求预览版本时选择 next。同一已发布版本只调整标签，不重复发布。公开发布与验收状态见 [validation](validation.md)。
 
 交互发布使用已验证邮箱、已启用 2FA 的账号执行 `npm login`；默认浏览器授权，终端密码登录也可能要求一次性验证。包名变更时须同步所有示例。
 
-首次发布后在 npm 为本仓库的 publish.yml 配置 GitHub Actions trusted publisher，并建立 npm environment。后续手动工作流使用 OIDC/provenance，发布前要求当前提交的完整 acceptance 工作流成功，不保存长期 npm 令牌。在对应发布提交上，以 `PUBLISHED_PACKAGE_SPEC=cwa-book-mcp@0.1.0` 运行 `npm run test:package`，核对公共包 integrity 与本地产物一致，再验证空缓存安装、五工具发现/调用及重启。真实书源和目标部署的剩余验收仍须按 [validation](validation.md) 完成。
+自动发布须在 npm 为本仓库的 publish.yml 配置 GitHub Actions trusted publisher，并建立 npm environment。该工作流使用 OIDC/provenance，要求当前提交的完整 acceptance 成功，不保存长期 npm 令牌。交互发布也须先通过同样验收。在对应发布提交上，以 `PUBLISHED_PACKAGE_SPEC=cwa-book-mcp@0.3.0` 运行 `npm run test:package`，核对公共包 integrity，再验证空缓存安装、六工具、匿名原文件交付及重启。真实书源和目标部署边界见 [validation](validation.md)。
 
 参考：[npm 登录](https://docs.npmjs.com/cli/v11/commands/npm-login)、[npm 2FA](https://docs.npmjs.com/about-two-factor-authentication)、[npm trusted publishers](https://docs.npmjs.com/trusted-publishers)、[npm shrinkwrap](https://docs.npmjs.com/cli/v11/configuring-npm/npm-shrinkwrap-json)、[MCPHub 配置](https://docs.mcphub.app/configuration/mcp-settings)、[VS Code MCP](https://code.visualstudio.com/docs/copilot/customization/mcp-servers)。

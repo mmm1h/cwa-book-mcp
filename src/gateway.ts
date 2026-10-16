@@ -10,7 +10,7 @@ import type { Tasks } from './tasks.js';
 export const downloadSchema = z
   .object({
     task_id: z.string().uuid(),
-    delivery: z.enum(['opds', 'gateway']).default('opds'),
+    delivery: z.enum(['source', 'opds', 'gateway']).optional(),
   })
   .strict();
 
@@ -147,10 +147,12 @@ export class Gateway {
   }
   async downloadUrl(
     taskId: string,
-    delivery: 'opds' | 'gateway' = 'opds',
+    delivery?: 'source' | 'opds' | 'gateway',
     signal?: AbortSignal,
   ): Promise<Record<string, unknown>> {
     const task = this.tasks.store.get(taskId);
+    delivery ??= task.kind === 'download' ? 'source' : 'opds';
+    if (delivery === 'source') return this.tasks.sourceDownloadUrl(taskId);
     if (task.state !== 'ready' || !task.cwa) fail('TASK_NOT_READY', '任务尚未验证完成');
     const verified = await this.tasks.verifiedFile(task.cwa, task.required_format, signal);
     try {

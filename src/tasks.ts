@@ -53,6 +53,11 @@ export const uploadSchema = z
   .strict();
 export type AcquireInput = z.infer<typeof acquireSchema>;
 export type UploadInput = z.infer<typeof uploadSchema>;
+export const downloadBookSchema = acquireSchema.extend({
+  action: z.enum(['start', 'collect', 'retry', 'cancel']).default('start'),
+  save_to_cwa: z.boolean().optional(),
+});
+export type DownloadBookInput = z.infer<typeof downloadBookSchema>;
 
 export class Tasks {
   private timer?: NodeJS.Timeout;
@@ -88,16 +93,127 @@ export class Tasks {
     };
   }
   private publicTask(t: Task): Record<string, unknown> {
-    const { filename: _filename, expected_sha256: _expected, staged_sha256: _staged, ...rest } = t;
+    const {
+      filename: _filename,
+      expected_sha256: _expected,
+      staged_sha256: _staged,
+      source_download: source,
+      source_requested_at: _requested,
+      ...rest
+    } = t;
     return {
       ...rest,
       book: publicBook(t.book),
       cwa: t.cwa ? publicBook(t.cwa) : undefined,
       choices: t.choices?.map((b) => this.catalog.expose(b)),
+      ...(t.kind === 'download'
+        ? {
+            download: {
+              status:
+                t.state === 'cancelled'
+                  ? 'cancelled'
+                  : source?.verification
+                    ? this.sourceAvailableUntil(source) > Date.now()
+                      ? 'available'
+                      : 'expired'
+                    : t.error
+                      ? 'unavailable'
+                      : 'pending',
+              format: t.book.formats[0],
+              filename: source?.filename,
+              available_until: source ? this.sourceAvailableUntil(source) : undefined,
+              cache_until: source?.available_until,
+              expires_at: source?.expires_at ?? null,
+              verification: source?.verification,
+            },
+            collection: {
+              requested: !!t.save_to_cwa,
+              state: t.save_to_cwa ? t.state : 'not_requested',
+            },
+          }
+        : {}),
     };
   }
   get(taskId: string): Record<string, unknown> {
     return this.publicTask(this.store.get(taskId));
+  }
+  download(input: DownloadBookInput): Record<string, unknown> {
+    if (input.action !== 'start') {
+      if (
+        !input.task_id ||
+        input.request_id ||
+        input.candidate_id ||
+        input.required_format ||
+        input.save_to_cwa !== undefined
+      )
+        fail('INVALID_ARGUMENT', '后续操作只接受 action 和 task_id');
+      const task = this.store.get(input.task_id);
+      if (task.kind !== 'download') fail('INVALID_ARGUMENT', '需要 download_book 创建的任务');
+      if (input.action !== 'collect')
+        return this.acquire({ action: input.action, task_id: task.id });
+      this.writeAllowed();
+      if (task.state === 'cancelled') fail('INVALID_STATE', '任务已取消');
+      if (task.save_to_cwa) return this.publicTask(task);
+      if (!task.source_download?.verification) fail('TASK_NOT_READY', '原文件尚未校验完成');
+      if (
+        task.source_download.available_until <= Date.now() ||
+        !existsSync(this.files.path(task.id))
+      )
+        fail('INPUT_MISSING', '原文件缓存已过期或丢失；不会自动重新消耗书源额度');
+      const updated = this.store.mutate(task.id, (current) => {
+        current.save_to_cwa = true;
+        current.state = 'staged';
+        current.error = undefined;
+        current.next_run_at = Date.now();
+      });
+      this.wake();
+      return this.publicTask(updated);
+    }
+    if (!input.request_id || !input.candidate_id || !input.required_format || input.task_id)
+      fail('INVALID_ARGUMENT', 'start 需要 request_id、candidate_id、required_format');
+    const canonical = { ...input, save_to_cwa: input.save_to_cwa ?? true };
+    const existing = this.store.existing(input.request_id, canonical);
+    if (existing) return this.publicTask(existing);
+    const book = this.catalog.candidate(input.candidate_id);
+    if (book.origin !== 'zlibrary')
+      fail(
+        'DIRECT_DOWNLOAD_UNAVAILABLE',
+        '此候选来自 CWA；使用已有 OPDS 认证或显式网关，不能自动改用其他书源版本',
+      );
+    if (book.formats[0] !== input.required_format)
+      fail('FORMAT_UNAVAILABLE', '直接交付提供书源原文件，请选择所需格式的候选；转换由 CWA 负责');
+    if (canonical.save_to_cwa) this.writeAllowed();
+    const task = this.store.create(input.request_id, canonical, () => ({
+      ...this.newTask('download', book, input.required_format!, 'queued'),
+      save_to_cwa: canonical.save_to_cwa,
+    }));
+    this.wake();
+    return this.publicTask(task);
+  }
+  sourceDownloadUrl(taskId: string): Record<string, unknown> {
+    const task = this.store.get(taskId);
+    if (task.kind !== 'download') fail('DIRECT_DOWNLOAD_UNAVAILABLE', '任务未请求书源原文件交付');
+    if (task.state === 'cancelled') fail('INVALID_STATE', '任务已取消');
+    const source = task.source_download;
+    if (!source?.verification) fail('TASK_NOT_READY', '原文件尚未校验完成');
+    const available_until = this.sourceAvailableUntil(source);
+    if (available_until <= Date.now())
+      fail('SOURCE_LINK_EXPIRED', '链接复用窗口已过期；不会自动重新取票，请明确创建新下载请求');
+    return {
+      task_id: task.id,
+      delivery: 'source',
+      status: 'link_issued',
+      url: source.url,
+      filename: source.filename,
+      format: source.format,
+      authentication: { scheme: 'none' },
+      expires_at: source.expires_at ?? null,
+      available_until,
+      verification: source.verification,
+    };
+  }
+  private sourceAvailableUntil(source: NonNullable<Task['source_download']>): number {
+    return Math.min(source.available_until, source.expires_at ?? Infinity);
   }
   acquire(input: AcquireInput): Record<string, unknown> {
     if (input.action === 'start') {
@@ -136,7 +252,16 @@ export class Tasks {
     if (input.action === 'retry') {
       if (!['blocked', 'needs_review', 'failed'].includes(t.state))
         fail('INVALID_STATE', '只有受阻、待核对或失败任务可以重试');
-      if (t.kind === 'upload' || t.book.origin !== 'cwa') this.writeAllowed();
+      if (
+        t.kind === 'upload' ||
+        (t.book.origin !== 'cwa' && (t.kind !== 'download' || t.save_to_cwa))
+      )
+        this.writeAllowed();
+      if (t.kind === 'download' && t.source_requested_at && !t.source_download?.verification)
+        fail(
+          'SOURCE_OUTCOME_UNKNOWN',
+          '书源取票或下载结果不明；不会自动再次取票，请明确创建新请求',
+        );
       t = this.store.mutate(t.id, (current) => {
         if (!current.submitted_at && !existsSync(this.files.path(current.id)))
           current.staged_sha256 = undefined;
@@ -264,8 +389,40 @@ export class Tasks {
     await this.files.init();
     await this.files.recoverParts();
     for (const t of this.store.all()) {
+      if (
+        t.kind === 'download' &&
+        t.source_requested_at &&
+        !t.source_download?.verification &&
+        t.state !== 'cancelled'
+      ) {
+        if (t.source_download && (await this.files.exists(t.id))) {
+          try {
+            const info = await validateFile(
+              this.files.path(t.id),
+              t.source_download.format,
+              this.config.maxFileBytes,
+            );
+            t.staged_sha256 = info.sha256;
+            t.size_bytes = info.size_bytes;
+            t.source_download.verification = { ...info, at: Date.now() };
+            t.state = t.save_to_cwa ? 'staged' : 'download_available';
+            t.error = undefined;
+          } catch {
+            await this.files.remove(t.id);
+          }
+        }
+        if (!t.source_download?.verification) {
+          t.state = 'blocked';
+          t.error = {
+            code: 'SOURCE_OUTCOME_UNKNOWN',
+            message: '重启前书源取票或下载结果不明；不会自动再次取票',
+            retryable: false,
+          };
+        }
+        this.store.save(t);
+      }
       if (terminal(t)) {
-        await this.files.remove(t.id);
+        if (!this.keepSourceFile(t)) await this.files.remove(t.id);
         continue;
       }
       if (
@@ -315,8 +472,9 @@ export class Tasks {
   private async cleanup(): Promise<void> {
     const before = Date.now() - this.config.retentionDays * 86400000;
     for (const t of this.store.all()) {
-      if (terminal(t)) await this.files.remove(t.id);
-      else if (t.submitted_at) await this.files.remove(t.id);
+      if (terminal(t)) {
+        if (!this.keepSourceFile(t)) await this.files.remove(t.id);
+      } else if (t.submitted_at) await this.files.remove(t.id);
       else if (t.updated_at < before && !t.submitted_at) {
         this.store.mutate(t.id, (current) => {
           current.state = 'failed';
@@ -330,6 +488,15 @@ export class Tasks {
       }
     }
     for (const key of this.store.prune(before)) await this.files.remove(key);
+  }
+  private keepSourceFile(t: Task): boolean {
+    return (
+      t.kind === 'download' &&
+      t.state === 'download_available' &&
+      !t.save_to_cwa &&
+      !!t.source_download?.verification &&
+      t.source_download.available_until > Date.now()
+    );
   }
   start(): void {
     this.wake();
@@ -383,7 +550,8 @@ export class Tasks {
       });
     } finally {
       this.active = undefined;
-      if (terminal(this.store.get(t.id))) await this.files.remove(t.id);
+      const current = this.store.get(t.id);
+      if (terminal(current) && !this.keepSourceFile(current)) await this.files.remove(t.id);
     }
   }
   private async matches(want: Book, signal: AbortSignal): Promise<Book[]> {
@@ -452,6 +620,56 @@ export class Tasks {
     }
   }
   private async step(t: Task, signal: AbortSignal): Promise<void> {
+    if (t.kind === 'download' && !t.source_download?.verification) {
+      if (t.source_requested_at)
+        fail('SOURCE_OUTCOME_UNKNOWN', '书源取票或下载结果不明；不会自动再次取票');
+      this.store.mutate(t.id, (current) => {
+        current.state = 'downloading';
+        current.source_requested_at = Date.now();
+      });
+      const response = await this.source.openForDelivery(t.book, signal);
+      try {
+        this.store.mutate(t.id, (current) => {
+          current.source_download = {
+            url: response.url,
+            format: t.required_format,
+            filename:
+              [...t.book.title]
+                .map((c) => (c.charCodeAt(0) < 32 ? '_' : c))
+                .join('')
+                .replace(/[<>:"/\\|?*]/g, '_')
+                .slice(0, 120) +
+              '.' +
+              t.required_format,
+            available_until: Date.now() + this.config.sourceLinkSeconds * 1000,
+            expires_at: response.expires_at,
+          };
+        });
+        const raw = response.headers['content-length'];
+        const size = typeof raw === 'string' && /^\d+$/.test(raw) ? Number(raw) : undefined;
+        const info = await this.files.save(
+          t.id,
+          response.body,
+          t.required_format,
+          size,
+          undefined,
+          signal,
+        );
+        signal.throwIfAborted();
+        this.store.mutate(t.id, (current) => {
+          if (current.state === 'cancelled') return;
+          current.source_download!.verification = { ...info, at: Date.now() };
+          current.staged_sha256 = info.sha256;
+          current.size_bytes = info.size_bytes;
+          current.state = current.save_to_cwa ? 'staged' : 'download_available';
+          current.next_run_at = Date.now();
+        });
+      } finally {
+        response.body.destroy();
+      }
+      return;
+    }
+    if (t.kind === 'download' && !t.save_to_cwa) return;
     if (t.book.origin === 'cwa') {
       await this.verify(t, t.book, signal);
       return;
@@ -518,6 +736,7 @@ export class Tasks {
       return;
     }
     if (!t.staged_sha256) {
+      if (t.kind === 'download') fail('INPUT_MISSING', '原文件缓存丢失；不会自动再次下载书源');
       if (t.kind === 'upload') fail('INPUT_MISSING', '暂存文件缺失，请重新上传');
       const sourceFormat = formatSchema.parse(t.book.formats[0]);
       this.store.mutate(t.id, (current) => {
